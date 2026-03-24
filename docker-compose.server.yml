@@ -1,0 +1,41 @@
+services:
+  collector:
+    image: nicolargo/glances:latest
+    container_name: server-monitor-collector
+    environment:
+      - GLANCES_OPT=-w
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - monitor-internal
+
+  backend:
+    build:
+      context: ./backend
+    container_name: server-monitor-backend
+    environment:
+      - GLANCES_BASE_URL=${GLANCES_BASE_URL:-http://collector:61208}
+      - GLANCES_ENDPOINT=${GLANCES_ENDPOINT:-/api/3/all}
+      - REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-3}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-5}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+    depends_on:
+      - collector
+    restart: unless-stopped
+    networks:
+      - monitor-internal
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: server-monitor-cloudflared
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - monitor-internal
+
+networks:
+  monitor-internal:
+    driver: bridge
