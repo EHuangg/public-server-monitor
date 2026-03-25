@@ -5,13 +5,18 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        slateNight: "#081421",
+        creamBg: "#fbf6ee",
+        creamCard: "#f5ead8",
+        creamCard2: "#efe0c9",
+        brownInk: "#2b1d12",
+        brownMuted: "#6b4f3a",
+        brownBorder: "#cbb89e",
         statusGood: "#0f9d58",
         statusWarn: "#f6ad55",
         statusBad: "#e53e3e"
       },
       backgroundImage: {
-        grid: "radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.18) 1px, transparent 0)"
+        grid: "radial-gradient(circle at 1px 1px, rgba(107, 79, 58, 0.15) 1px, transparent 0)"
       }
     }
   },

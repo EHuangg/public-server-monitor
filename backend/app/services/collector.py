@@ -39,7 +39,11 @@ def _to_int(value: object, default: int = 0) -> int:
 
 
 def _extract_docker_containers(payload: dict) -> list[DockerContainerMetric]:
-    docker_payload = payload.get("docker", [])
+    # Glances has historically used "docker" but newer versions expose container stats
+    # under the "containers" plugin key.
+    docker_payload = payload.get("docker", None)
+    if docker_payload is None:
+        docker_payload = payload.get("containers", [])
 
     if isinstance(docker_payload, dict):
         candidates = docker_payload.get("containers", [])

@@ -7,8 +7,7 @@ export async function GET() {
 
   try {
     const response = await fetch(requestUrl, {
-      cache: "no-store",
-      next: { revalidate: 0 }
+      cache: "no-store"
     });
 
     if (!response.ok) {
