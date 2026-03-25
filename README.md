@@ -6,7 +6,7 @@ This project exposes a **sanitized FastAPI endpoint** in front of Glances so the
 
 ## Stack
 
-- Collector: Glances (`/api/3/all`)
+- Collector: Glances (`/api/4/all`)
 - Middleware: FastAPI (sanitization + 5 second cache)
 - Frontend: Next.js + Tailwind CSS
 - Orchestration: Docker Compose
@@ -20,7 +20,8 @@ This project exposes a **sanitized FastAPI endpoint** in front of Glances so the
   - `cpu.percent`
   - `mem.percent`
   - `uptime_seconds`
-  - Docker container `name` and `status`
+  - Docker container `name`, `status`, `cpu_percent`, `memory_mb`, `memory_percent`
+  - Optional Minecraft status (`online`, player count, latency) when configured
 - Everything else from raw Glances payload is discarded.
 
 ## Quick start
@@ -54,9 +55,10 @@ curl http://localhost:3000/api/metrics
   "mem": { "percent": 46.2 },
   "uptime_seconds": 123456,
   "docker": [
-    { "name": "frontend", "status": "running" },
-    { "name": "backend", "status": "running" }
+    { "name": "frontend", "status": "running", "cpu_percent": 0.1, "memory_mb": 142, "memory_percent": 0.9 },
+    { "name": "backend", "status": "running", "cpu_percent": 0.4, "memory_mb": 96, "memory_percent": 0.6 }
   ],
+  "minecraft": { "online": true, "players_online": 3, "players_max": 20, "latency_ms": 34 },
   "system_health": "All Systems Nominal",
   "last_updated": "2026-03-24T18:17:31.800000Z"
 }
@@ -67,10 +69,13 @@ curl http://localhost:3000/api/metrics
 Root `.env`:
 
 - `GLANCES_BASE_URL` default `http://collector:61208`
-- `GLANCES_ENDPOINT` default `/api/3/all`
+- `GLANCES_ENDPOINT` default `/api/4/all`
 - `REQUEST_TIMEOUT_SECONDS` default `3`
 - `CACHE_TTL_SECONDS` default `5`
 - `ALLOWED_ORIGINS` default `http://localhost:3000`
+- `MINECRAFT_HOST` optional Minecraft host/IP
+- `MINECRAFT_PORT` default `25565`
+- `MINECRAFT_TIMEOUT_SECONDS` default `2.5`
 - `BACKEND_URL` default `http://backend:8000`
 - `NEXT_PUBLIC_POLL_INTERVAL_MS` default `5000`
 
@@ -138,7 +143,7 @@ docker compose -f docker-compose.server.yml logs -f cloudflared
 7. Test backend and collector from container network:
 
 ```bash
-docker exec -it server-monitor-backend python -c "import urllib.request; print(urllib.request.urlopen('http://collector:61208/api/3/all', timeout=3).status)"
+docker exec -it server-monitor-backend python -c "import urllib.request; print(urllib.request.urlopen('http://collector:61208/api/4/all', timeout=3).status)"
 docker exec -it server-monitor-backend python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read().decode())"
 ```
 

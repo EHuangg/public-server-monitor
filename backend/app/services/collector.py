@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
+import re
 
 import httpx
+from mcstatus import JavaServer
 
 from app.config import settings
-from app.models.schemas import CpuMetric, DockerContainerMetric, MemoryMetric, MetricsResponse
+from app.models.schemas import CpuMetric, DockerContainerMetric, MemoryMetric, MetricsResponse, MinecraftMetric
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -37,9 +39,80 @@ def _extract_docker_containers(payload: dict) -> list[DockerContainerMetric]:
 
         name = str(item.get("name") or item.get("container_name") or "unknown")
         status = str(item.get("status") or item.get("state") or "unknown")
-        containers.append(DockerContainerMetric(name=name, status=status))
+        cpu_percent = _to_float(item.get("cpu_percent") or item.get("cpu") or 0)
+        memory_mb = _to_float(
+            item.get("memory_mb")
+            or item.get("mem")
+            or item.get("memory")
+            or item.get("memory_usage")
+            or 0
+        )
+        memory_percent = _to_float(item.get("memory_percent") or item.get("mem_percent") or item.get("mem_pct") or 0)
+        containers.append(
+            DockerContainerMetric(
+                name=name,
+                status=status,
+                cpu_percent=cpu_percent,
+                memory_mb=memory_mb,
+                memory_percent=memory_percent,
+            )
+        )
 
     return containers
+
+
+def _parse_uptime_string(value: str) -> int:
+    cleaned = value.strip()
+    match = re.search(r"(?:(\d+)\s+days?,\s*)?(\d+):(\d+):(\d+)", cleaned)
+    if not match:
+        return 0
+
+    days = int(match.group(1) or 0)
+    hours = int(match.group(2))
+    minutes = int(match.group(3))
+    seconds = int(match.group(4))
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
+def _extract_uptime_seconds(payload: dict) -> int:
+    quicklook = payload.get("quicklook", {}) if isinstance(payload.get("quicklook", {}), dict) else {}
+
+    candidates: list[object] = [
+        payload.get("uptime"),
+        payload.get("uptime_seconds"),
+        quicklook.get("uptime"),
+        quicklook.get("uptime_seconds"),
+    ]
+
+    for candidate in candidates:
+        if isinstance(candidate, (int, float)):
+            return _to_int(candidate)
+        if isinstance(candidate, str):
+            parsed = _parse_uptime_string(candidate)
+            if parsed > 0:
+                return parsed
+
+    return 0
+
+
+def _extract_minecraft_status() -> MinecraftMetric | None:
+    if not settings.minecraft_host:
+        return None
+
+    try:
+        server = JavaServer.lookup(f"{settings.minecraft_host}:{settings.minecraft_port}")
+        status = server.status(timeout=settings.minecraft_timeout_seconds)
+        players_online = int(getattr(status.players, "online", 0) or 0)
+        players_max = int(getattr(status.players, "max", 0) or 0)
+        latency_ms = _to_float(getattr(status, "latency", 0.0))
+        return MinecraftMetric(
+            online=True,
+            players_online=players_online,
+            players_max=players_max,
+            latency_ms=latency_ms,
+        )
+    except Exception:
+        return MinecraftMetric(online=False, players_online=0, players_max=0, latency_ms=0)
 
 
 def _calculate_health(cpu_percent: float, mem_percent: float, containers: list[DockerContainerMetric]) -> str:
@@ -65,8 +138,9 @@ async def fetch_sanitized_metrics() -> MetricsResponse:
 
     cpu_percent = _to_float(cpu_data.get("total") if isinstance(cpu_data, dict) else 0)
     mem_percent = _to_float(mem_data.get("percent") if isinstance(mem_data, dict) else 0)
-    uptime_seconds = _to_int(payload.get("uptime") if isinstance(payload, dict) else 0)
+    uptime_seconds = _extract_uptime_seconds(payload if isinstance(payload, dict) else {})
     containers = _extract_docker_containers(payload if isinstance(payload, dict) else {})
+    minecraft = _extract_minecraft_status()
     health = _calculate_health(cpu_percent=cpu_percent, mem_percent=mem_percent, containers=containers)
 
     return MetricsResponse(
@@ -74,6 +148,7 @@ async def fetch_sanitized_metrics() -> MetricsResponse:
         mem=MemoryMetric(percent=mem_percent),
         uptime_seconds=uptime_seconds,
         docker=containers,
+        minecraft=minecraft,
         system_health=health,
         last_updated=datetime.now(UTC),
     )

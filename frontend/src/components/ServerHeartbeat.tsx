@@ -32,6 +32,13 @@ function formatUptime(seconds: number): string {
   return `${days}d ${hours}h ${minutes}m`;
 }
 
+function formatMemoryMb(value: number): string {
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(2)} GB`;
+  }
+  return `${value.toFixed(0)} MB`;
+}
+
 export default function ServerHeartbeat() {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -111,16 +118,37 @@ export default function ServerHeartbeat() {
               {metrics.docker.map((container) => {
                 const good = ["running", "up", "healthy"].includes(container.status.toLowerCase());
                 return (
-                  <div key={`${container.name}-${container.status}`} className="flex items-center justify-between rounded-lg border border-slate-600/60 bg-slate-800/65 px-3 py-2 text-sm">
-                    <span className="truncate pr-3 text-slate-100">{container.name}</span>
-                    <span className={`rounded px-2 py-0.5 text-xs font-semibold ${good ? "bg-statusGood/20 text-emerald-300" : "bg-statusWarn/20 text-amber-300"}`}>
-                      {container.status}
-                    </span>
+                  <div key={`${container.name}-${container.status}`} className="space-y-2 rounded-lg border border-slate-600/60 bg-slate-800/65 px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate pr-3 text-slate-100">{container.name}</span>
+                      <span className={`rounded px-2 py-0.5 text-xs font-semibold ${good ? "bg-statusGood/20 text-emerald-300" : "bg-statusWarn/20 text-amber-300"}`}>
+                        {container.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-slate-300">
+                      <span>CPU {container.cpu_percent.toFixed(1)}%</span>
+                      <span>RAM {formatMemoryMb(container.memory_mb)} ({container.memory_percent.toFixed(1)}%)</span>
+                    </div>
                   </div>
                 );
               })}
             </div>
           </div>
+
+          {metrics.minecraft && (
+            <div className="rounded-xl border border-slate-500/30 bg-slate-900/45 p-4">
+              <p className="mb-2 text-xs uppercase tracking-wider text-slate-400">Minecraft Server</p>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className={metrics.minecraft.online ? "text-emerald-300" : "text-amber-300"}>
+                  {metrics.minecraft.online ? "Online" : "Offline"}
+                </span>
+                <span className="text-slate-200">
+                  Players {metrics.minecraft.players_online}/{metrics.minecraft.players_max}
+                </span>
+                <span className="text-slate-300">Latency {metrics.minecraft.latency_ms.toFixed(0)} ms</span>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="rounded-xl border border-slate-500/30 bg-slate-900/45 p-4 text-sm text-slate-300">Awaiting first telemetry sample...</div>

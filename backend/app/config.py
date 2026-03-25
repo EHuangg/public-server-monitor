@@ -4,10 +4,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     glances_base_url: str = Field(default="http://collector:61208")
-    glances_endpoint: str = Field(default="/api/3/all")
+    glances_endpoint: str = Field(default="/api/4/all")
     request_timeout_seconds: float = Field(default=3.0)
     cache_ttl_seconds: int = Field(default=5)
     allowed_origins: str = Field(default="http://localhost:3000")
+    minecraft_host: str = Field(default="")
+    minecraft_port: int = Field(default=25565)
+    minecraft_timeout_seconds: float = Field(default=2.5)
 
     model_config = SettingsConfigDict(
         env_file=".env",

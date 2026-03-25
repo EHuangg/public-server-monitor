@@ -12,10 +12,11 @@ node_modules/
 .env
 backend/.env
 frontend/.env.local
+.env.example
+.env.server.example
 
 # OS / editor
 .DS_Store
 Thumbs.db
 .vscode/
 
-.env.example
