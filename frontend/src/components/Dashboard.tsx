@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import ServerCaseBlueprint from "@/components/ServerCaseBlueprint";
 import ServerHeartbeat from "@/components/ServerHeartbeat";
 import Sidebar from "@/components/Sidebar";
 import { fetchMetrics } from "@/lib/api";
@@ -40,12 +41,15 @@ export default function Dashboard() {
   }, []);
 
   return (
-    <main className="min-h-screen md:flex">
-      <Sidebar metrics={metrics} />
-      <div className="flex-1 p-4 md:p-10">
-        <ServerHeartbeat metrics={metrics} error={error} />
-      </div>
-    </main>
+    <div className="min-h-screen w-full">
+      <main className="md:flex">
+        <Sidebar metrics={metrics} />
+        <div className="flex-1 p-4 md:p-10">
+          <ServerHeartbeat metrics={metrics} error={error} />
+        </div>
+      </main>
+      <ServerCaseBlueprint />
+    </div>
   );
 }
 
