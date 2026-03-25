@@ -24,6 +24,17 @@ This project exposes a **sanitized FastAPI endpoint** in front of Glances so the
   - Optional Minecraft status (`online`, player count, latency) when configured
 - Everything else from raw Glances payload is discarded.
 
+  ## Zero-trust hardening defaults
+
+  - Backend runs as a non-root user in the container image.
+  - Compose services use:
+    - `read_only: true`
+    - `cap_drop: [ALL]`
+    - `security_opt: [no-new-privileges:true]`
+    - `tmpfs: [/tmp]`
+  - Collector does not mount Docker socket directly. It connects to a locked-down socket proxy (`tecnativa/docker-socket-proxy`) with read-only API permissions.
+  - Output sanitization strips private IPv4 addresses, UUID-like values, and absolute paths from exposed string fields before JSON is sent to frontend.
+
 ## Quick start
 
 1. Copy environment variables:
@@ -167,3 +178,57 @@ Workflow file: `.github/workflows/status-check.yml`
 
 - Add `STATUS_API_URL` repository secret (public tunnel endpoint like `https://status.example.com/api/metrics`).
 - Scheduled check runs every 10 minutes and fails when API is unavailable.
+
+## Auto deploy on push (secure SSH)
+
+Workflow file: `.github/workflows/deploy-server.yml`
+
+This workflow runs when backend/server deployment files change on `main`, then SSHes into your server and executes `scripts/deploy-server.sh`.
+
+1. Create a dedicated deploy keypair on your local machine:
+
+```bash
+ssh-keygen -t ed25519 -f ./deploy_key -C "github-actions-deploy"
+```
+
+2. Add `deploy_key.pub` to your server user:
+
+```bash
+mkdir -p ~/.ssh
+cat deploy_key.pub >> ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+```
+
+3. Capture your server host key for pinning:
+
+```bash
+ssh-keyscan -H your.server.host
+```
+
+4. In GitHub repository secrets, add:
+
+- `DEPLOY_SSH_PRIVATE_KEY`: contents of `deploy_key`
+- `DEPLOY_SSH_KNOWN_HOSTS`: one line output from `ssh-keyscan -H your.server.host`
+- `DEPLOY_USER`: SSH username on server
+- `DEPLOY_HOST`: server hostname or IP
+- `DEPLOY_PORT`: SSH port (optional, defaults to `22`)
+- `DEPLOY_PATH`: absolute path to repo on server, for example `/home/evan/github/public-server-monitor`
+
+5. Push to `main` and watch Actions tab for `Deploy Server Stack`.
+
+Security notes:
+
+- Use a dedicated, least-privilege deploy user.
+- Keep deploy key unique to this repo and rotate if exposed.
+- Do not disable host key checking; use `DEPLOY_SSH_KNOWN_HOSTS` pinning.
+- Protect `main` with required pull request reviews so untrusted code cannot trigger production deploy.
+- Restrict who can approve and merge to `main`.
+
+### Public repo safety with on-push deploy
+
+Keeping this repository public is safe if write access is tightly controlled.
+
+- Public users can read and fork, but cannot push to your `main` branch unless explicitly granted write access.
+- The deploy workflow only runs on push to `main` (not on pull_request), so forked PRs cannot access deploy secrets.
+- Use GitHub environment protection rules for `production-server` (required reviewers) to gate deployments.

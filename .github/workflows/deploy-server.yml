@@ -1,0 +1,42 @@
+name: Deploy Server Stack
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - backend/**
+      - docker-compose.server.yml
+      - scripts/deploy-server.sh
+      - .github/workflows/deploy-server.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref_protected == true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production-server
+    steps:
+      - name: Load deploy SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+      - name: Pin server host key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Run remote deploy script
+        env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "chmod +x '$DEPLOY_PATH/scripts/deploy-server.sh' && REPO_DIR='$DEPLOY_PATH' bash '$DEPLOY_PATH/scripts/deploy-server.sh'"

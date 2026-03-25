@@ -1,11 +1,44 @@
 services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.1.1
+    container_name: server-monitor-socket-proxy
+    environment:
+      - CONTAINERS=1
+      - INFO=1
+      - VERSION=1
+      - EVENTS=0
+      - IMAGES=0
+      - NETWORKS=0
+      - VOLUMES=0
+      - POST=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    networks:
+      - monitor-internal
+
   collector:
     image: nicolargo/glances:latest
     container_name: server-monitor-collector
     environment:
       - GLANCES_OPT=-w
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - DOCKER_HOST=tcp://socket-proxy:2375
+    depends_on:
+      - socket-proxy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     restart: unless-stopped
     networks:
       - monitor-internal
@@ -16,12 +49,22 @@ services:
     container_name: server-monitor-backend
     environment:
       - GLANCES_BASE_URL=${GLANCES_BASE_URL:-http://collector:61208}
-      - GLANCES_ENDPOINT=${GLANCES_ENDPOINT:-/api/3/all}
+      - GLANCES_ENDPOINT=${GLANCES_ENDPOINT:-/api/4/all}
       - REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-3}
       - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-5}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
+      - MINECRAFT_HOST=${MINECRAFT_HOST:-}
+      - MINECRAFT_PORT=${MINECRAFT_PORT:-25565}
+      - MINECRAFT_TIMEOUT_SECONDS=${MINECRAFT_TIMEOUT_SECONDS:-2.5}
     depends_on:
       - collector
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     restart: unless-stopped
     networks:
       - monitor-internal
@@ -37,6 +80,13 @@ services:
       - backend
     ports:
       - "3000:3000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     restart: unless-stopped
     networks:
       - monitor-internal

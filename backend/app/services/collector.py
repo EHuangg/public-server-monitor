@@ -1,11 +1,27 @@
-from datetime import UTC, datetime
 import re
+from datetime import UTC, datetime
 
 import httpx
 from mcstatus import JavaServer
 
 from app.config import settings
 from app.models.schemas import CpuMetric, DockerContainerMetric, MemoryMetric, MetricsResponse, MinecraftMetric
+
+PRIVATE_IPV4_PATTERN = re.compile(
+    r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})\b"
+)
+UUID_PATTERN = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b")
+ABS_PATH_PATTERN = re.compile(r"(?:[A-Za-z]:\\[^\s]+|/[^\s]+)")
+
+
+def _sanitize_text(value: object) -> str:
+    text = str(value)
+    text = PRIVATE_IPV4_PATTERN.sub("[private-ip]", text)
+    text = UUID_PATTERN.sub("[uuid]", text)
+    text = ABS_PATH_PATTERN.sub("[path]", text)
+    return text
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -37,8 +53,8 @@ def _extract_docker_containers(payload: dict) -> list[DockerContainerMetric]:
         if not isinstance(item, dict):
             continue
 
-        name = str(item.get("name") or item.get("container_name") or "unknown")
-        status = str(item.get("status") or item.get("state") or "unknown")
+        name = _sanitize_text(item.get("name") or item.get("container_name") or "unknown")
+        status = _sanitize_text(item.get("status") or item.get("state") or "unknown")
         cpu_percent = _to_float(item.get("cpu_percent") or item.get("cpu") or 0)
         memory_mb = _to_float(
             item.get("memory_mb")
