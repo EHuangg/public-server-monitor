@@ -1,131 +1,66 @@
 import type { Group, Object3D } from "three";
 import { Euler, Vector3 } from "three";
 
-/** Blender object names for the case (logical keys used in code). */
+/**
+ * EXACT node names as exported by the GLB (Blender strips dots → camelCase).
+ * Verified from the console dump:
+ *   Top, Side_left, Side_right, Back, Bottom, Front,
+ *   FrontPanel, FrontPanel001, FrontPanel002, FrontPanel003,
+ *   FrontPanelDVD (Group), FrontPanelDVDDrive,
+ *   MotherBoard, BackPower,
+ *   CPU, CPU001, RAM, RAM001, RAM002, RAM003
+ *
+ * Note: Side_left / Side_right keep the underscore but use lowercase l/r.
+ */
 export const CASE_OBJECT_NAMES = [
   "Front",
-  "Front.Panel",
-  "Front.Panel.001",
-  "Front.Panel.002",
-  "Front.Panel.003",
+  "FrontPanel",
+  "FrontPanel001",
+  "FrontPanel002",
+  "FrontPanel003",
   "Back",
   "Top",
   "Bottom",
-  "Side_Left",
-  "Side_Right"
+  "Side_left",
+  "Side_right",
 ] as const;
 
 export type CaseObjectName = (typeof CASE_OBJECT_NAMES)[number];
 
 /**
- * World-space slide direction (Three.js: Y up, right-handed).
- * Front / panels → +X | Back → −X
- * Side_Left → −Y | Side_Right → +Y
- * Bottom → −Z | Top → +Z
+ * World-space explode directions (Three.js: Y-up, right-handed).
+ *
+ * Adjust NEXT_PUBLIC_CASE_AXIS_YAW_DEGREES if the GLB is rotated in world space.
+ *
+ * Current layout (looking at the front of the server):
+ *   Front panels  → +X
+ *   Back          → −X
+ *   Top           → +Y
+ *   Bottom        → −Y
+ *   Side_left     → −Z
+ *   Side_right    → +Z
  */
-export const CASE_EXPLODE_WORLD: Record<CaseObjectName, [number, number, number]> = {
-  Front:           [1,  0,  0],
-  "Front.Panel":   [1,  0,  0],
-  "Front.Panel.001": [1, 0, 0],
-  "Front.Panel.002": [1, 0, 0],
-  "Front.Panel.003": [1, 0, 0],
-  Back:            [-1, 0,  0],
-  Top:             [0,  1,  0],  // was [0, 0,  1]
-  Bottom:          [0, -1,  0],  // was [0, 0, -1]
-  Side_Left:       [0,  0,  1],  // was [0, -1, 0]
-  Side_Right:      [0,  0, -1],  // was [0,  1, 0]
+const CASE_EXPLODE_WORLD: Record<CaseObjectName, [number, number, number]> = {
+  Front:          [ 1,  0,  0],
+  FrontPanel:     [ 1,  0,  0],
+  FrontPanel001:  [ 1,  0,  0],
+  FrontPanel002:  [ 1,  0,  0],
+  FrontPanel003:  [ 1,  0,  0],
+  Back:           [-1,  0,  0],
+  Top:            [ 0,  1,  0],
+  Bottom:         [ 0, -1,  0],
+  Side_left:      [ 0,  0,  1], 
+  Side_right:     [ 0,  0, -1], 
 };
-
-/** Extra names to try if `getObjectByName` fails (Blender / glTF naming varies). */
-export const CASE_NAME_ALIASES: Partial<Record<CaseObjectName, string[]>> = {
-  "Front.Panel": ["Front_Panel", "Front Panel"],
-  "Front.Panel.001": [
-    "Front_Panel.001",
-    "Front_Panel_001",
-    "Front Panel.001",
-    "Pannel.001",
-    "pannel.001",
-    "Panel.001"
-  ],
-  "Front.Panel.002": [
-    "Front_Panel.002",
-    "Front_Panel_002",
-    "Front Panel.002",
-    "Pannel.002",
-    "pannel.002",
-    "Panel.002"
-  ],
-  "Front.Panel.003": [
-    "Front_Panel.003",
-    "Front_Panel_003",
-    "Front Panel.003",
-    "Pannel.003",
-    "pannel.003",
-    "Panel.003"
-  ],
-  Side_Left: ["Side Left", "Side-Left"],
-  Side_Right: ["Side Right", "Side-Right"]
-};
-
-function normalizeForMatch(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/_/g, ".")
-    .replace(/\s+/g, "")
-    .replace(/-/g, "");
-}
 
 /**
- * Find an object by exact name, aliases, normalized equality, or numbered panel patterns.
+ * Collect case parts directly by exact GLB name.
+ * No fuzzy matching needed — names are now ground-truth from the console dump.
  */
-export function resolveCasePart(root: Object3D, canonical: CaseObjectName): Object3D | null {
-  const direct = root.getObjectByName(canonical);
-  if (direct) return direct;
-
-  const aliases = CASE_NAME_ALIASES[canonical];
-  if (aliases) {
-    for (const a of aliases) {
-      const o = root.getObjectByName(a);
-      if (o) return o;
-    }
-  }
-
-  const targetNorm = normalizeForMatch(canonical);
-  let found: Object3D | null = null;
-  root.traverse((obj) => {
-    if (found) return;
-    if (normalizeForMatch(obj.name) === targetNorm) found = obj;
-  });
-  if (found) return found;
-
-  const panelNum = canonical.match(/Front\.Panel\.(\d+)$/i)?.[1];
-  if (panelNum) {
-    const n = panelNum.replace(/^0+/, "") || panelNum;
-    const patterns = [
-      new RegExp(`^Front[._]Panel[._]?0*${panelNum}$`, "i"),
-      new RegExp(`^Front[._]Panel[._]?0*${n}$`, "i"),
-      new RegExp(`^Pannel[._]?0*${panelNum}$`, "i"),
-      new RegExp(`^pannel[._]?0*${panelNum}$`, "i"),
-      new RegExp(`^Panel[._]?0*${panelNum}$`, "i")
-    ];
-    root.traverse((obj) => {
-      if (found) return;
-      for (const p of patterns) {
-        if (p.test(obj.name)) {
-          found = obj;
-          return;
-        }
-      }
-    });
-  }
-
-  return found;
-}
-
 export function collectCaseParts(root: Group): Partial<Record<CaseObjectName, Object3D>> {
   const map: Partial<Record<CaseObjectName, Object3D>> = {};
   for (const name of CASE_OBJECT_NAMES) {
-    const obj = resolveCasePart(root, name);
+    const obj = root.getObjectByName(name);
     if (obj) {
       map[name] = obj;
     }
@@ -134,22 +69,45 @@ export function collectCaseParts(root: Group): Partial<Record<CaseObjectName, Ob
 }
 
 /**
- * Slide directions in Three.js world space (Y up):
- * Front / panels +X, Back −X, Side_Left −Y, Side_Right +Y, Bottom −Z, Top +Z.
+ * Returns the normalised world-space explode direction for a given part name.
  *
- * If your GLB is authored in Blender, the mesh may be rotated vs world; set
- * NEXT_PUBLIC_CASE_AXIS_YAW_DEGREES (e.g. 90 or -90) so these match what you see.
+ * Handles all GLB node names including the ones managed outside CASE_OBJECT_NAMES
+ * (BackPower, FrontPanelDVD, FrontPanelDVDDrive, CPU, CPU001, RAM–RAM003).
+ *
+ * Falls back to +X if the name is unrecognised.
  */
 export function getExplodeWorldDirection(name: string): Vector3 {
+  // Direct lookup in the main table first
   const tuple = CASE_EXPLODE_WORLD[name as CaseObjectName];
-  const v = tuple ? new Vector3(tuple[0], tuple[1], tuple[2]) : new Vector3(1, 0, 0);
+
+  // Extended lookup for parts not in CASE_OBJECT_NAMES
+  const EXTRA: Record<string, [number, number, number]> = {
+    BackPower:          [-1,  0,  0],   // same axis as Back
+    FrontPanelDVD:      [ 1,  0,  0],   // same axis as Front
+    FrontPanelDVDDrive: [ 1,  0,  0],   // same axis as Front
+    // RAM and CPU are hover-only and never call getExplodeWorldDirection,
+    // but define them here as a safety net so a zero-vector is never returned.
+    RAM:    [0, 1, 0],
+    RAM001: [0, 1, 0],
+    RAM002: [0, 1, 0],
+    RAM003: [0, 1, 0],
+    CPU:    [0, 1, 0],
+    CPU001: [0, 1, 0],
+  };
+
+  const resolved = tuple ?? EXTRA[name];
+  const v = resolved
+    ? new Vector3(resolved[0], resolved[1], resolved[2])
+    : new Vector3(1, 0, 0); // fallback: +X
+
   v.normalize();
+
   const yawDeg = Number(process.env.NEXT_PUBLIC_CASE_AXIS_YAW_DEGREES ?? 0);
   if (Number.isFinite(yawDeg) && yawDeg !== 0) {
-    const euler = new Euler(0, (yawDeg * Math.PI) / 180, 0, "YXZ");
-    v.applyEuler(euler);
+    v.applyEuler(new Euler(0, (yawDeg * Math.PI) / 180, 0, "YXZ"));
     v.normalize();
   }
+
   return v;
 }
 
