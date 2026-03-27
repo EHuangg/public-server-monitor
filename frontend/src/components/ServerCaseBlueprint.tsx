@@ -133,115 +133,41 @@ function getExplodeDirectionOverride(name: string): Vector3 {
   return getExplodeWorldDirection(name as never).clone();
 }
 
-function getByPath(obj: unknown, path: string): unknown {
-  if (!obj || typeof obj !== "object") return undefined;
-
-  let cur: any = obj;
-  for (const key of path.split(".")) {
-    if (cur == null || typeof cur !== "object" || !(key in cur)) return undefined;
-    cur = cur[key];
-  }
-  return cur;
+function clampPercent(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, value));
 }
 
-function firstNumber(obj: unknown, paths: string[]): number | null {
-  for (const path of paths) {
-    const value = getByPath(obj, path);
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-  }
-  return null;
-}
-
-function bytesToGb(value: number | null): number | null {
-  if (value == null) return null;
-  return value / (1024 * 1024 * 1024);
-}
-
-function firstGbValue(
-  obj: unknown,
-  gbPaths: string[],
-  bytePaths: string[]
-): number | null {
-  const gb = firstNumber(obj, gbPaths);
-  if (gb != null) return gb;
-
-  const bytes = firstNumber(obj, bytePaths);
-  return bytesToGb(bytes);
-}
-
-function formatGb(value: number | null): string {
+function formatPercent(value: number | null): string {
   if (value == null) return "—";
-  return value.toFixed(1);
-}
-
-function clampPercent(value: number | null): number | null {
-  if (value == null) return null;
-
-  const normalized = value <= 1 ? value * 100 : value;
-  return Math.max(0, Math.min(100, normalized));
+  return `${value.toFixed(1)}%`;
 }
 
 function extractCpuTelemetry(metrics: MetricsResponse | null) {
-  const raw = metrics as unknown;
-
-  const percent = clampPercent(
-    firstNumber(raw, [
-      "cpu.percent",
-      "system.cpu.percent",
-      "telemetry.cpu.percent",
-    ])
-  );
-
   return {
     label: "CPU",
-    used: null,
-    total: null,
-    percent,
-    suffix: "GB",
+    percent: clampPercent(metrics?.cpu?.percent ?? null),
   };
 }
 
 function extractRamTelemetry(metrics: MetricsResponse | null) {
-  const raw = metrics as unknown;
-
-  const percent = clampPercent(
-    firstNumber(raw, [
-      "mem.percent",
-      "memory.percent",
-      "ram.percent",
-      "system.memory.percent",
-      "telemetry.memory.percent",
-    ])
-  );
-
   return {
     label: "RAM",
-    used: null,
-    total: null,
-    percent,
-    suffix: "GB",
+    percent: clampPercent(metrics?.mem?.percent ?? null),
   };
 }
 
 function TelemetryWindow({
   title,
-  used,
-  total,
   percent,
-  suffix,
   align = "left",
   innerRef,
 }: {
   title: string;
-  used: number | null;
-  total: number | null;
   percent: number | null;
-  suffix: string;
   align?: "left" | "right";
   innerRef: RefObject<HTMLDivElement>;
 }) {
-  const percentText = percent == null ? "—" : `${percent.toFixed(2)}%`;
-
   return (
     <div
       ref={innerRef}
@@ -266,18 +192,15 @@ function TelemetryWindow({
           Resource Load
         </div>
 
-        <div className="flex items-end gap-2">
-          <div className="font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
-            {formatGb(used)}
-          </div>
-          <div className="pb-1 font-mono text-sm text-[#6b4a36]">
-            / {formatGb(total)} {suffix}
-          </div>
+        <div className="font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
+          {formatPercent(percent)}
         </div>
 
         <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
           <span>Occupancy</span>
-          <span className="font-mono text-[#3a2418]">{percentText}</span>
+          <span className="font-mono text-[#3a2418]">
+            {formatPercent(percent)}
+          </span>
         </div>
 
         <div className="mt-2 h-2 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
@@ -787,20 +710,14 @@ export default function ServerCaseBlueprint({
 
             <TelemetryWindow
               title={cpuTelemetry.label}
-              used={cpuTelemetry.used}
-              total={cpuTelemetry.total}
               percent={cpuTelemetry.percent}
-              suffix={cpuTelemetry.suffix}
               align="left"
               innerRef={cpuPanelRef}
             />
 
             <TelemetryWindow
               title={ramTelemetry.label}
-              used={ramTelemetry.used}
-              total={ramTelemetry.total}
               percent={ramTelemetry.percent}
-              suffix={ramTelemetry.suffix}
               align="right"
               innerRef={ramPanelRef}
             />
