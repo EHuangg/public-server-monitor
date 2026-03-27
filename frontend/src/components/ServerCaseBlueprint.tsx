@@ -184,75 +184,18 @@ function clampPercent(value: number | null): number | null {
 function extractCpuTelemetry(metrics: MetricsResponse | null) {
   const raw = metrics as unknown;
 
-  const used = firstGbValue(
-    raw,
-    [
-      "cpu.used_gb",
-      "cpu.usedGb",
-      "cpu.memory_used_gb",
-      "cpu.memoryUsedGb",
-      "system.cpu.used_gb",
-      "system.cpu.usedGb",
-      "telemetry.cpu.used_gb",
-      "telemetry.cpu.usedGb",
-    ],
-    [
-      "cpu.used_bytes",
-      "cpu.usedBytes",
-      "cpu.memory_used_bytes",
-      "cpu.memoryUsedBytes",
-      "system.cpu.used_bytes",
-      "system.cpu.usedBytes",
-      "telemetry.cpu.used_bytes",
-      "telemetry.cpu.usedBytes",
-    ]
-  );
-
-  const total = firstGbValue(
-    raw,
-    [
-      "cpu.total_gb",
-      "cpu.totalGb",
-      "cpu.capacity_gb",
-      "cpu.capacityGb",
-      "cpu.memory_total_gb",
-      "cpu.memoryTotalGb",
-      "system.cpu.total_gb",
-      "system.cpu.totalGb",
-      "telemetry.cpu.total_gb",
-      "telemetry.cpu.totalGb",
-    ],
-    [
-      "cpu.total_bytes",
-      "cpu.totalBytes",
-      "cpu.capacity_bytes",
-      "cpu.capacityBytes",
-      "cpu.memory_total_bytes",
-      "cpu.memoryTotalBytes",
-      "system.cpu.total_bytes",
-      "system.cpu.totalBytes",
-      "telemetry.cpu.total_bytes",
-      "telemetry.cpu.totalBytes",
-    ]
-  );
-
   const percent = clampPercent(
     firstNumber(raw, [
       "cpu.percent",
-      "cpu.usage_percent",
-      "cpu.usagePct",
-      "cpu.usage",
       "system.cpu.percent",
-      "system.cpu.usage_percent",
       "telemetry.cpu.percent",
-      "telemetry.cpu.usage_percent",
-    ]) ?? (used != null && total ? (used / total) * 100 : null)
+    ])
   );
 
   return {
     label: "CPU",
-    used,
-    total,
+    used: null,
+    total: null,
     percent,
     suffix: "GB",
   };
@@ -261,99 +204,20 @@ function extractCpuTelemetry(metrics: MetricsResponse | null) {
 function extractRamTelemetry(metrics: MetricsResponse | null) {
   const raw = metrics as unknown;
 
-  const used = firstGbValue(
-    raw,
-    [
-      "memory.used_gb",
-      "memory.usedGb",
-      "memory.used",
-      "ram.used_gb",
-      "ram.usedGb",
-      "ram.used",
-      "system.memory.used_gb",
-      "system.memory.usedGb",
-      "system.ram.used_gb",
-      "system.ram.usedGb",
-      "telemetry.memory.used_gb",
-      "telemetry.memory.usedGb",
-      "telemetry.ram.used_gb",
-      "telemetry.ram.usedGb",
-    ],
-    [
-      "memory.used_bytes",
-      "memory.usedBytes",
-      "ram.used_bytes",
-      "ram.usedBytes",
-      "system.memory.used_bytes",
-      "system.memory.usedBytes",
-      "system.ram.used_bytes",
-      "system.ram.usedBytes",
-      "telemetry.memory.used_bytes",
-      "telemetry.memory.usedBytes",
-      "telemetry.ram.used_bytes",
-      "telemetry.ram.usedBytes",
-    ]
-  );
-
-  const total = firstGbValue(
-    raw,
-    [
-      "memory.total_gb",
-      "memory.totalGb",
-      "memory.total",
-      "ram.total_gb",
-      "ram.totalGb",
-      "ram.total",
-      "system.memory.total_gb",
-      "system.memory.totalGb",
-      "system.ram.total_gb",
-      "system.ram.totalGb",
-      "telemetry.memory.total_gb",
-      "telemetry.memory.totalGb",
-      "telemetry.ram.total_gb",
-      "telemetry.ram.totalGb",
-    ],
-    [
-      "memory.total_bytes",
-      "memory.totalBytes",
-      "ram.total_bytes",
-      "ram.totalBytes",
-      "system.memory.total_bytes",
-      "system.memory.totalBytes",
-      "system.ram.total_bytes",
-      "system.ram.totalBytes",
-      "telemetry.memory.total_bytes",
-      "telemetry.memory.totalBytes",
-      "telemetry.ram.total_bytes",
-      "telemetry.ram.totalBytes",
-    ]
-  );
-
   const percent = clampPercent(
     firstNumber(raw, [
+      "mem.percent",
       "memory.percent",
-      "memory.usage_percent",
-      "memory.usagePct",
-      "memory.usage",
       "ram.percent",
-      "ram.usage_percent",
-      "ram.usagePct",
-      "ram.usage",
       "system.memory.percent",
-      "system.memory.usage_percent",
-      "system.ram.percent",
-      "system.ram.usage_percent",
       "telemetry.memory.percent",
-      "telemetry.memory.usage_percent",
-      "telemetry.ram.percent",
-      "telemetry.ram.usage_percent",
-    ]) ?? (used != null && total ? (used / total) * 100 : null)
+    ])
   );
 
   return {
     label: "RAM",
-    used,
-    total,
+    used: null,
+    total: null,
     percent,
     suffix: "GB",
   };
