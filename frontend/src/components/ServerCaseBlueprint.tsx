@@ -1,7 +1,7 @@
 "use client";
 
 import { createTimeline } from "animejs";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   Box3,
   Color,
@@ -27,6 +27,7 @@ import {
   collectCaseParts,
   getExplodeWorldDirection,
 } from "@/lib/serverCaseConfig";
+import type { MetricsResponse } from "@/lib/types";
 
 const MODEL_URL =
   process.env.NEXT_PUBLIC_SERVER_CASE_GLB ?? "/models/server-case.glb";
@@ -51,19 +52,19 @@ const HOVER_PARTS: Record<string, number> = {
   CPU001: 0.08,
 };
 
+const RAM_PART_NAMES = ["RAM", "RAM001", "RAM002", "RAM003"];
+const CPU_PART_NAMES = ["CPU", "CPU001"];
+
 // Animation constants
 const DVD_PREROLL_DIST = 0.5;
 const DVD_TRAY_DIST = 0.08;
-
-// Everyone stops at the same hard distance.
 const STOP_DISTANCE_MULT = 2.2;
 
 const DVD_PREROLL_END = 0.2;
 
 const GROUP_DURATION = 0.24;
-const GROUP_OFFSET = GROUP_DURATION * 0.25; // smaller gap / heavier overlap
+const GROUP_OFFSET = GROUP_DURATION * 0.25;
 
-// Start the normal explode earlier, but keep the page-load pose at zero progress.
 const GROUP_2_START = 0.0667; // Back, remaining Front layers
 const GROUP_2_END = GROUP_2_START + GROUP_DURATION;
 
@@ -103,7 +104,7 @@ function applyBlueprintStyle(mesh: Mesh): void {
   const edges = new EdgesGeometry(geom, 15);
   const line = new LineSegments(
     edges,
-    new LineBasicMaterial({ color: 0x020007, depthTest: true })
+    new LineBasicMaterial({ color: 0x2c1c12, depthTest: true })
   );
 
   line.renderOrder = 1;
@@ -118,34 +119,238 @@ function applyBlueprintToScene(scene: Scene): void {
 }
 
 function getExplodeDirectionOverride(name: string): Vector3 {
-  // Leave current scene behavior untouched:
-  // top/bottom are intentionally on Y for this model
   if (name === "Top") return new Vector3(0, 1, 0);
   if (name === "Bottom") return new Vector3(0, -1, 0);
 
-  // both side layers go -X
   if (name === "Side_left" || name === "Side_right") {
     return new Vector3(-1, 0, 0);
   }
 
-  // front layers go +X
   if (name === "Front" || name.startsWith("FrontPanel")) {
     return new Vector3(1, 0, 0);
   }
 
-  return getExplodeWorldDirection(name as any).clone();
+  return getExplodeWorldDirection(name as never).clone();
 }
 
-export default function ServerCaseBlueprint() {
-  const canvasMountRef = useRef<HTMLDivElement | null>(null);
-  const sectionRef = useRef<HTMLElement | null>(null);
-  const pinRef = useRef<HTMLDivElement | null>(null);
+function getByPath(obj: unknown, path: string): unknown {
+  if (!obj || typeof obj !== "object") return undefined;
+
+  let cur: any = obj;
+  for (const key of path.split(".")) {
+    if (cur == null || typeof cur !== "object" || !(key in cur)) return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
+function firstNumber(obj: unknown, paths: string[]): number | null {
+  for (const path of paths) {
+    const value = getByPath(obj, path);
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function formatGb(value: number | null): string {
+  if (value == null) return "—";
+  if (value >= 100) return value.toFixed(0);
+  if (value >= 10) return value.toFixed(1);
+  return value.toFixed(2);
+}
+
+function clampPercent(value: number | null): number | null {
+  if (value == null) return null;
+  return Math.max(0, Math.min(100, value));
+}
+
+function extractCpuTelemetry(metrics: MetricsResponse | null) {
+  const raw = metrics as unknown;
+
+  const used = firstNumber(raw, [
+    "cpu.used",
+    "cpu.usage_cores",
+    "system.cpu.used",
+    "telemetry.cpu.used",
+    "cpu.used_gb",
+    "cpu.usedGb",
+  ]);
+
+  const total = firstNumber(raw, [
+    "cpu.total",
+    "cpu.capacity",
+    "cpu.total_cores",
+    "system.cpu.total",
+    "telemetry.cpu.total",
+    "cpu.total_gb",
+    "cpu.totalGb",
+  ]);
+
+  const percent = clampPercent(
+    firstNumber(raw, [
+      "cpu.percent",
+      "cpu.usage_percent",
+      "cpu.usagePct",
+      "system.cpu.percent",
+      "telemetry.cpu.percent",
+    ]) ?? (used != null && total ? (used / total) * 100 : null)
+  );
+
+  return {
+    label: "CPU",
+    used,
+    total,
+    percent,
+    suffix: "GB",
+  };
+}
+
+function extractRamTelemetry(metrics: MetricsResponse | null) {
+  const raw = metrics as unknown;
+
+  const used = firstNumber(raw, [
+    "memory.used_gb",
+    "memory.usedGb",
+    "memory.used",
+    "ram.used_gb",
+    "ram.usedGb",
+    "ram.used",
+    "system.memory.used_gb",
+    "system.memory.usedGb",
+    "telemetry.memory.used_gb",
+  ]);
+
+  const total = firstNumber(raw, [
+    "memory.total_gb",
+    "memory.totalGb",
+    "memory.total",
+    "ram.total_gb",
+    "ram.totalGb",
+    "ram.total",
+    "system.memory.total_gb",
+    "system.memory.totalGb",
+    "telemetry.memory.total_gb",
+  ]);
+
+  const percent = clampPercent(
+    firstNumber(raw, [
+      "memory.percent",
+      "memory.usage_percent",
+      "memory.usagePct",
+      "ram.percent",
+      "ram.usage_percent",
+      "system.memory.percent",
+      "telemetry.memory.percent",
+    ]) ?? (used != null && total ? (used / total) * 100 : null)
+  );
+
+  return {
+    label: "RAM",
+    used,
+    total,
+    percent,
+    suffix: "GB",
+  };
+}
+
+function TelemetryWindow({
+  title,
+  used,
+  total,
+  percent,
+  suffix,
+  align = "left",
+  innerRef,
+}: {
+  title: string;
+  used: number | null;
+  total: number | null;
+  percent: number | null;
+  suffix: string;
+  align?: "left" | "right";
+  innerRef: React.RefObject<HTMLDivElement>;
+}) {
+  const percentText = percent == null ? "—" : `${Math.round(percent)}%`;
+
+  return (
+    <div
+      ref={innerRef}
+      className={[
+        "pointer-events-none absolute z-20 w-[220px] overflow-hidden border",
+        "border-[#4e3221] bg-[#f6ead1] text-[#3a2418]",
+        "shadow-[4px_4px_0_rgba(78,50,33,0.18)]",
+        align === "left"
+          ? "left-8 top-24 md:left-12 md:top-20"
+          : "right-8 top-24 md:right-12 md:top-20",
+      ].join(" ")}
+    >
+      <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2">
+        <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
+          <span>{title}</span>
+          <span>Live</span>
+        </div>
+      </div>
+
+      <div className="px-4 py-4 text-[#3a2418]">
+        <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
+          Resource Load
+        </div>
+
+        <div className="flex items-end gap-2">
+          <div className="font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
+            {formatGb(used)}
+          </div>
+          <div className="pb-1 font-mono text-sm text-[#6b4a36]">
+            / {formatGb(total)} {suffix}
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
+          <span>Occupancy</span>
+          <span className="font-mono text-[#3a2418]">{percentText}</span>
+        </div>
+
+        <div className="mt-2 h-2 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
+          <div
+            className="h-full bg-[#6b4a36] transition-[width] duration-500"
+            style={{ width: `${percent ?? 0}%` }}
+          />
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+          <div className="border border-[#4e3221] bg-[#efe1c3] px-2 py-2">
+            Signal Stable
+          </div>
+          <div className="border border-[#4e3221] bg-[#efe1c3] px-2 py-2 text-right">
+            Node Active
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ServerCaseBlueprint({
+  metrics,
+}: {
+  metrics: MetricsResponse | null;
+}) {
+  const canvasMountRef = useRef<HTMLDivElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const cpuPanelRef = useRef<HTMLDivElement>(null);
+  const ramPanelRef = useRef<HTMLDivElement>(null);
+  const cpuPathRef = useRef<SVGPathElement>(null);
+  const ramPathRef = useRef<SVGPathElement>(null);
+
+  const cpuTelemetry = useMemo(() => extractCpuTelemetry(metrics), [metrics]);
+  const ramTelemetry = useMemo(() => extractRamTelemetry(metrics), [metrics]);
 
   useEffect(() => {
     const container = canvasMountRef.current;
     const section = sectionRef.current;
-    const pin = pinRef.current;
-    if (!container || !section) return;
+    const overlay = overlayRef.current;
+    if (!container || !section || !overlay) return;
 
     let targetProgress = 0;
     let currentProgress = 0;
@@ -188,6 +393,7 @@ export default function ServerCaseBlueprint() {
     const hoverTarget = new Map<string, number>();
     const hoverCurrent = new Map<string, number>();
     const hoverBaseWorld = new Map<string, Vector3>();
+    const telemetryAnchorWorld = new Map<"cpu" | "ram", Vector3>();
 
     let maxDistance = 0.45;
     let rootGroup: Group | null = null;
@@ -235,10 +441,85 @@ export default function ServerCaseBlueprint() {
       return clamp01((progress - start) / (end - start));
     };
 
+    const getAverageWorldPosition = (names: string[]) => {
+      const points: Vector3[] = [];
+
+      for (const name of names) {
+        const obj = hoverMap.get(name) ?? rootGroup?.getObjectByName(name);
+        if (!obj) continue;
+
+        const wp = new Vector3();
+        obj.getWorldPosition(wp);
+        points.push(wp);
+      }
+
+      if (points.length === 0) return null;
+
+      const avg = new Vector3();
+      for (const p of points) avg.add(p);
+      avg.divideScalar(points.length);
+      return avg;
+    };
+
+    const setConnectorPath = (
+      path: SVGPathElement | null,
+      panel: HTMLDivElement | null,
+      anchor: { x: number; y: number; visible: boolean } | null,
+      side: "left" | "right"
+    ) => {
+      if (!path || !panel || !anchor) return;
+
+      const overlayRect = overlay.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+
+      const panelEdgeX =
+        side === "left"
+          ? panelRect.right - overlayRect.left
+          : panelRect.left - overlayRect.left;
+
+      const panelY = panelRect.top - overlayRect.top + panelRect.height * 0.5;
+      const elbowX = side === "left" ? anchor.x - 40 : anchor.x + 40;
+
+      const d = [
+        `M ${anchor.x} ${anchor.y}`,
+        `L ${elbowX} ${anchor.y}`,
+        `L ${elbowX} ${panelY}`,
+        `L ${panelEdgeX} ${panelY}`,
+      ].join(" ");
+
+      path.setAttribute("d", d);
+      path.style.opacity = anchor.visible ? "1" : "0";
+    };
+
+    const updateTelemetryOverlay = () => {
+      const cpuAnchorWorld = telemetryAnchorWorld.get("cpu");
+      const ramAnchorWorld = telemetryAnchorWorld.get("ram");
+
+      const cpuAnchor = cpuAnchorWorld
+        ? projectWorldToScreen(
+            cpuAnchorWorld,
+            camera,
+            renderer.domElement.width,
+            renderer.domElement.height
+          )
+        : null;
+
+      const ramAnchor = ramAnchorWorld
+        ? projectWorldToScreen(
+            ramAnchorWorld,
+            camera,
+            renderer.domElement.width,
+            renderer.domElement.height
+          )
+        : null;
+
+      setConnectorPath(cpuPathRef.current, cpuPanelRef.current, cpuAnchor, "left");
+      setConnectorPath(ramPathRef.current, ramPanelRef.current, ramAnchor, "right");
+    };
+
     const updateCasePositions = (progress: number) => {
       if (!rootGroup) return;
 
-      // standard exploding parts
       for (const [name, obj] of partsMap) {
         const bw = baseWorld.get(name);
         const wd = worldDir.get(name);
@@ -262,7 +543,6 @@ export default function ServerCaseBlueprint() {
         obj.visible = true;
       }
 
-      // DVD + DVD drive
       const dvdDrive = rootGroup.getObjectByName("FrontPanelDVDDrive");
       const dvdTray = rootGroup.getObjectByName("FrontPanelDVD");
 
@@ -281,17 +561,14 @@ export default function ServerCaseBlueprint() {
           const getDvdPos = (base: Vector3, isTray: boolean) => {
             const pos = base.clone();
 
-            // preroll forward first
             pos.addScaledVector(DVD_FORWARD_AXIS, DVD_PREROLL_DIST * preP);
 
-            // tray rises and keeps moving +X during the same preroll segment
             if (isTray && preP > 0.5) {
               const trayLift = (preP - 0.5) / 0.5;
               pos.addScaledVector(DVD_TRAY_AXIS, DVD_TRAY_DIST * trayLift);
               pos.addScaledVector(DVD_FORWARD_AXIS, DVD_PREROLL_DIST * trayLift);
             }
 
-            // then both move to the same hard stop distance
             pos.addScaledVector(DVD_FORWARD_AXIS, explodeP * maxDistance);
 
             return pos;
@@ -306,7 +583,6 @@ export default function ServerCaseBlueprint() {
         }
       }
 
-      // hover-only internal parts
       for (const [name, obj] of hoverMap) {
         const base = hoverBaseWorld.get(name);
         const origScale = originalScales.get(name) || new Vector3(1, 1, 1);
@@ -326,10 +602,8 @@ export default function ServerCaseBlueprint() {
     const getSectionScrollProgress = (): number => {
       const rect = section.getBoundingClientRect();
       const vh = window.innerHeight;
-
       const totalScrollable = Math.max(1, rect.height - vh);
       const scrolled = Math.min(totalScrollable, Math.max(0, -rect.top));
-
       return clamp01(scrolled / totalScrollable);
     };
 
@@ -355,25 +629,7 @@ export default function ServerCaseBlueprint() {
         hoverCurrent.set(name, current + (target - current) * 0.08);
       }
 
-      if (pin && rootGroup) {
-        const testPart =
-          partsMap.get("Front") ?? Array.from(partsMap.values())[0];
-
-        if (testPart) {
-          const wp = new Vector3();
-          testPart.getWorldPosition(wp);
-
-          const { x, y, visible } = projectWorldToScreen(
-            wp,
-            camera,
-            renderer.domElement.width,
-            renderer.domElement.height
-          );
-
-          pin.style.opacity = visible ? "1" : "0.3";
-          pin.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%)`;
-        }
-      }
+      updateTelemetryOverlay();
 
       controls.update();
       renderer.render(scene, camera);
@@ -437,7 +693,7 @@ export default function ServerCaseBlueprint() {
 
       const collected = collectCaseParts(rootGroup);
       for (const name of CASE_OBJECT_NAMES) {
-        const obj = (collected as any)[name];
+        const obj = collected[name as keyof typeof collected];
         if (obj) partsMap.set(name, obj);
       }
 
@@ -485,6 +741,12 @@ export default function ServerCaseBlueprint() {
         hoverCurrent.set(name, 0);
       }
 
+      const cpuStart = getAverageWorldPosition(CPU_PART_NAMES);
+      const ramStart = getAverageWorldPosition(RAM_PART_NAMES);
+
+      if (cpuStart) telemetryAnchorWorld.set("cpu", cpuStart.clone());
+      if (ramStart) telemetryAnchorWorld.set("ram", ramStart.clone());
+
       onScroll();
       loop();
       window.dispatchEvent(new Event("resize"));
@@ -494,6 +756,7 @@ export default function ServerCaseBlueprint() {
       renderer.setSize(container.clientWidth, container.clientHeight);
       camera.aspect = container.clientWidth / container.clientHeight;
       camera.updateProjectionMatrix();
+      updateTelemetryOverlay();
     };
 
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -511,8 +774,12 @@ export default function ServerCaseBlueprint() {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", resize);
       renderer.domElement.removeEventListener("mousemove", onMouseMove);
+      controls.dispose();
       renderer.dispose();
       scene.clear();
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
+      }
     };
   }, []);
 
@@ -526,12 +793,43 @@ export default function ServerCaseBlueprint() {
         <div className="relative flex-1 w-full">
           <div ref={canvasMountRef} className="absolute inset-0" />
 
-          <div
-            ref={pinRef}
-            className="pointer-events-none absolute left-0 top-0 z-10 rounded border border-brownBorder bg-creamCard/95 px-3 py-2 text-xs text-brownInk shadow-md transition-opacity duration-300"
-          >
-            <strong>SYSTEM CORE</strong>
-            <br /> Status: Active
+          <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-10">
+            <svg className="absolute inset-0 h-full w-full overflow-visible">
+              <path
+                ref={cpuPathRef}
+                fill="none"
+                stroke="#3a2418"
+                strokeWidth="2"
+                opacity="0"
+              />
+              <path
+                ref={ramPathRef}
+                fill="none"
+                stroke="#3a2418"
+                strokeWidth="2"
+                opacity="0"
+              />
+            </svg>
+
+            <TelemetryWindow
+              title={cpuTelemetry.label}
+              used={cpuTelemetry.used}
+              total={cpuTelemetry.total}
+              percent={cpuTelemetry.percent}
+              suffix={cpuTelemetry.suffix}
+              align="left"
+              innerRef={cpuPanelRef}
+            />
+
+            <TelemetryWindow
+              title={ramTelemetry.label}
+              used={ramTelemetry.used}
+              total={ramTelemetry.total}
+              percent={ramTelemetry.percent}
+              suffix={ramTelemetry.suffix}
+              align="right"
+              innerRef={ramPanelRef}
+            />
           </div>
         </div>
       </div>

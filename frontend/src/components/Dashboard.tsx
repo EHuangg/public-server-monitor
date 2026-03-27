@@ -48,7 +48,7 @@ export default function Dashboard() {
           <ServerHeartbeat metrics={metrics} error={error} />
         </div>
       </main>
-      <ServerCaseBlueprint />
+      <ServerCaseBlueprint metrics={metrics} />
     </div>
   );
 }
