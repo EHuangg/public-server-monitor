@@ -33,11 +33,8 @@ const MODEL_URL =
   process.env.NEXT_PUBLIC_SERVER_CASE_GLB ?? "/models/server-case.glb";
 
 /**
- * Coordinate convention:
- * (X, Z, Y) -> (forwards, upwards, sideways)
- *
- * Leaving scene convention untouched. Top/Bottom are intentionally kept on Y
- * because that matches how this model is currently oriented in your scene.
+ * Keep the current working scene behavior.
+ * Do not "correct" axes beyond the overrides below.
  */
 const WORLD_UP = new Vector3(0, 0, 1);
 const DVD_FORWARD_AXIS = new Vector3(1, 0, 0);
@@ -55,7 +52,6 @@ const HOVER_PARTS: Record<string, number> = {
 const RAM_PART_NAMES = ["RAM", "RAM001", "RAM002", "RAM003"];
 const CPU_PART_NAMES = ["CPU", "CPU001"];
 
-// Animation constants
 const DVD_PREROLL_DIST = 0.5;
 const DVD_TRAY_DIST = 0.08;
 const STOP_DISTANCE_MULT = 2.2;
@@ -65,22 +61,22 @@ const DVD_PREROLL_END = 0.2;
 const GROUP_DURATION = 0.24;
 const GROUP_OFFSET = GROUP_DURATION * 0.25;
 
-const GROUP_2_START = 0.0667; // Back, remaining Front layers
+const GROUP_2_START = 0.0667;
 const GROUP_2_END = GROUP_2_START + GROUP_DURATION;
 
-const GROUP_1_START = GROUP_2_START - GROUP_OFFSET; // DVD, DVDDrive
+const GROUP_1_START = GROUP_2_START - GROUP_OFFSET;
 const GROUP_1_END = GROUP_1_START + GROUP_DURATION;
 
-const GROUP_3_START = GROUP_2_START + GROUP_OFFSET; // Side_right
+const GROUP_3_START = GROUP_2_START + GROUP_OFFSET;
 const GROUP_3_END = GROUP_3_START + GROUP_DURATION;
 
-const GROUP_4_START = GROUP_3_START + GROUP_OFFSET; // Side_left
+const GROUP_4_START = GROUP_3_START + GROUP_OFFSET;
 const GROUP_4_END = GROUP_4_START + GROUP_DURATION;
 
-const GROUP_5_START = GROUP_4_START + GROUP_OFFSET; // BackPower
+const GROUP_5_START = GROUP_4_START + GROUP_OFFSET;
 const GROUP_5_END = GROUP_5_START + GROUP_DURATION;
 
-const GROUP_6_START = GROUP_5_START + GROUP_OFFSET; // Top, Bottom
+const GROUP_6_START = GROUP_5_START + GROUP_OFFSET;
 const GROUP_6_END = GROUP_6_START + GROUP_DURATION;
 
 function applyBlueprintStyle(mesh: Mesh): void {
@@ -143,28 +139,99 @@ function formatPercent(value: number | null): string {
   return `${value.toFixed(1)}%`;
 }
 
-function extractCpuTelemetry(metrics: MetricsResponse | null) {
+function formatGigabytes(
+  used: number | null | undefined,
+  total: number | null | undefined
+): string {
+  const hasUsed = typeof used === "number" && Number.isFinite(used);
+  const hasTotal = typeof total === "number" && Number.isFinite(total);
+
+  if (hasUsed && hasTotal) {
+    return `${used!.toFixed(1)} / ${total!.toFixed(1)} GB`;
+  }
+
+  if (hasTotal) {
+    return `${total!.toFixed(1)} GB`;
+  }
+
+  if (hasUsed) {
+    return `${used!.toFixed(1)} GB`;
+  }
+
+  return "—";
+}
+
+function formatUptime(totalSeconds: number | null | undefined): string {
+  if (typeof totalSeconds !== "number" || !Number.isFinite(totalSeconds)) {
+    return "—";
+  }
+
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function formatLastRefresh(iso: string | null | undefined): string {
+  if (!iso) return "—";
+
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return date.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+type PanelData = {
+  title: string;
+  primaryLabel: string;
+  primaryValue: string;
+  secondaryLabel: string;
+  secondaryValue: string;
+  percent: number | null;
+};
+
+function extractCpuTelemetry(metrics: MetricsResponse | null): PanelData {
   return {
-    label: "CPU",
+    title: "CPU",
+    primaryLabel: "Uptime",
+    primaryValue: formatUptime(metrics?.uptime_seconds ?? null),
+    secondaryLabel: "Last Refresh",
+    secondaryValue: formatLastRefresh(metrics?.last_updated ?? null),
     percent: clampPercent(metrics?.cpu?.percent ?? null),
   };
 }
 
-function extractRamTelemetry(metrics: MetricsResponse | null) {
+function extractRamTelemetry(metrics: MetricsResponse | null): PanelData {
   return {
-    label: "RAM",
+    title: "RAM",
+    primaryLabel: "Capacity",
+    primaryValue: formatGigabytes(
+      metrics?.mem?.used_gb ?? null,
+      metrics?.mem?.total_gb ?? null
+    ),
+    secondaryLabel: "Available",
+    secondaryValue:
+      typeof metrics?.mem?.available_gb === "number"
+        ? `${metrics.mem.available_gb.toFixed(1)} GB`
+        : "—",
     percent: clampPercent(metrics?.mem?.percent ?? null),
   };
 }
 
 function TelemetryWindow({
-  title,
-  percent,
+  data,
   align = "left",
   innerRef,
 }: {
-  title: string;
-  percent: number | null;
+  data: PanelData;
   align?: "left" | "right";
   innerRef: RefObject<HTMLDivElement>;
 }) {
@@ -172,7 +239,7 @@ function TelemetryWindow({
     <div
       ref={innerRef}
       className={[
-        "pointer-events-none absolute z-20 w-[220px] overflow-hidden border",
+        "pointer-events-none absolute z-20 w-[240px] overflow-hidden border",
         "border-[#4e3221] bg-[#f6ead1] text-[#3a2418]",
         "shadow-[4px_4px_0_rgba(78,50,33,0.18)]",
         align === "left"
@@ -182,41 +249,52 @@ function TelemetryWindow({
     >
       <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2">
         <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
-          <span>{title}</span>
+          <span>{data.title}</span>
           <span>Live</span>
         </div>
       </div>
 
       <div className="px-4 py-4 text-[#3a2418]">
-        <div className="mb-2 text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
+        <div className="grid grid-cols-1 gap-2">
+          <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
+            <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+              {data.primaryLabel}
+            </div>
+            <div className="font-mono text-xl leading-none tracking-tight text-[#3a2418]">
+              {data.primaryValue}
+            </div>
+          </div>
+
+          <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
+            <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+              {data.secondaryLabel}
+            </div>
+            <div className="font-mono text-sm leading-none tracking-tight text-[#3a2418]">
+              {data.secondaryValue}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
           Resource Load
         </div>
 
-        <div className="font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
-          {formatPercent(percent)}
+        <div className="mt-1 font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
+          {formatPercent(data.percent)}
         </div>
 
         <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
           <span>Occupancy</span>
           <span className="font-mono text-[#3a2418]">
-            {formatPercent(percent)}
+            {formatPercent(data.percent)}
           </span>
         </div>
 
         <div className="mt-2 h-2 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
           <div
             className="h-full bg-[#6b4a36] transition-[width] duration-500"
-            style={{ width: `${percent ?? 0}%` }}
+            style={{ width: `${data.percent ?? 0}%` }}
           />
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
-          <div className="border border-[#4e3221] bg-[#efe1c3] px-2 py-2">
-            Signal Stable
-          </div>
-          <div className="border border-[#4e3221] bg-[#efe1c3] px-2 py-2 text-right">
-            Node Active
-          </div>
         </div>
       </div>
     </div>
@@ -709,15 +787,13 @@ export default function ServerCaseBlueprint({
             </svg>
 
             <TelemetryWindow
-              title={cpuTelemetry.label}
-              percent={cpuTelemetry.percent}
+              data={cpuTelemetry}
               align="left"
               innerRef={cpuPanelRef}
             />
 
             <TelemetryWindow
-              title={ramTelemetry.label}
-              percent={ramTelemetry.percent}
+              data={ramTelemetry}
               align="right"
               innerRef={ramPanelRef}
             />
