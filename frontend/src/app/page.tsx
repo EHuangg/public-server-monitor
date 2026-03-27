@@ -1,7 +1,7 @@
-import Dashboard from "@/components/Dashboard";
+import ServerCaseBlueprint from "@/components/ServerCaseBlueprint";
 
 export default function HomePage() {
   return (
-    <Dashboard />
+    <ServerCaseBlueprint />
   );
 }
