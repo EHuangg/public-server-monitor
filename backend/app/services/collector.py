@@ -1,4 +1,6 @@
+import json
 import re
+import subprocess
 from datetime import UTC, datetime
 
 import httpx
@@ -74,7 +76,7 @@ def _bytes_to_gb(value: object) -> float | None:
         return None
     if parsed < 0:
         return None
-    return round(parsed / (1024 ** 3), 2)
+    return round(parsed / (1024**3), 2)
 
 
 def _mhz_from_hz_or_mhz(value: object) -> float | None:
@@ -82,11 +84,9 @@ def _mhz_from_hz_or_mhz(value: object) -> float | None:
     if parsed is None or parsed < 0:
         return None
 
-    # If it's a very large number, assume Hz and convert to MHz.
     if parsed > 1_000_000:
         return round(parsed / 1_000_000, 2)
 
-    # Otherwise assume already MHz.
     return round(parsed, 2)
 
 
@@ -95,6 +95,158 @@ def _first_present(dct: dict, keys: list[str]) -> object | None:
         if key in dct and dct[key] is not None:
             return dct[key]
     return None
+
+
+def _run_command(cmd: list[str]) -> str | None:
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _read_file(path: str) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def _fallback_cpu_model() -> str | None:
+    lscpu_json = _run_command(["lscpu", "-J"])
+    if lscpu_json:
+        try:
+            data = json.loads(lscpu_json)
+            for row in data.get("lscpu", []):
+                field = str(row.get("field", "")).strip().rstrip(":")
+                if field == "Model name":
+                    value = str(row.get("data", "")).strip()
+                    if value:
+                        return _sanitize_text(value)
+        except Exception:
+            pass
+
+    cpuinfo = _read_file("/proc/cpuinfo")
+    if cpuinfo:
+        for line in cpuinfo.splitlines():
+            if line.lower().startswith("model name"):
+                parts = line.split(":", 1)
+                if len(parts) == 2 and parts[1].strip():
+                    return _sanitize_text(parts[1].strip())
+
+    return None
+
+
+def _fallback_cpu_frequency_mhz() -> float | None:
+    current_freq = _read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+    if current_freq:
+        try:
+            return round(float(current_freq) / 1000.0, 2)
+        except (TypeError, ValueError):
+            pass
+
+    lscpu_output = _run_command(["lscpu"])
+    if lscpu_output:
+        for line in lscpu_output.splitlines():
+            if "CPU MHz" in line or "CPU max MHz" in line:
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    parsed = _to_float_or_none(parts[1].strip())
+                    if parsed is not None:
+                        return round(parsed, 2)
+
+    cpuinfo = _read_file("/proc/cpuinfo")
+    if cpuinfo:
+        for line in cpuinfo.splitlines():
+            if line.lower().startswith("cpu mhz"):
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    parsed = _to_float_or_none(parts[1].strip())
+                    if parsed is not None:
+                        return round(parsed, 2)
+
+    return None
+
+
+def _fallback_nvidia_gpu() -> GpuMetric | None:
+    output = _run_command(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ]
+    )
+    if not output:
+        return None
+
+    line = output.splitlines()[0]
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 5:
+        return None
+
+    name, util, mem_used_mb, mem_total_mb, temp_c = parts[:5]
+
+    used_gb = None
+    total_gb = None
+
+    used_mb_val = _to_float_or_none(mem_used_mb)
+    total_mb_val = _to_float_or_none(mem_total_mb)
+
+    if used_mb_val is not None:
+        used_gb = round(used_mb_val / 1024.0, 2)
+    if total_mb_val is not None:
+        total_gb = round(total_mb_val / 1024.0, 2)
+
+    temperature_c = _to_float_or_none(temp_c)
+    if temperature_c is not None:
+        temperature_c = round(max(0.0, temperature_c), 2)
+
+    return GpuMetric(
+        percent=_clamp_percent_or_none(util),
+        used_gb=used_gb,
+        total_gb=total_gb,
+        model=_sanitize_text(name) if name else None,
+        temperature_c=temperature_c,
+    )
+
+
+def _fallback_amd_gpu() -> GpuMetric | None:
+    busy = _read_file("/sys/class/drm/card0/device/gpu_busy_percent")
+    vram_used = _read_file("/sys/class/drm/card0/device/mem_info_vram_used")
+    vram_total = _read_file("/sys/class/drm/card0/device/mem_info_vram_total")
+    product_name = _read_file("/sys/class/drm/card0/device/product_name")
+
+    temperature_c = None
+    for path in [
+        "/sys/class/drm/card0/device/hwmon/hwmon0/temp1_input",
+        "/sys/class/hwmon/hwmon0/temp1_input",
+    ]:
+        raw = _read_file(path)
+        if raw is not None:
+            parsed = _to_float_or_none(raw)
+            if parsed is not None:
+                temperature_c = round(parsed / 1000.0, 2)
+                break
+
+    if not any([busy, vram_used, vram_total, product_name]):
+        return None
+
+    return GpuMetric(
+        percent=_clamp_percent_or_none(busy),
+        used_gb=_bytes_to_gb(vram_used),
+        total_gb=_bytes_to_gb(vram_total),
+        model=_sanitize_text(product_name) if product_name else "AMD GPU",
+        temperature_c=temperature_c,
+    )
 
 
 def _extract_docker_containers(payload: dict) -> list[DockerContainerMetric]:
@@ -208,15 +360,13 @@ def _extract_cpu_metric(payload: dict) -> CpuMetric:
     cpuinfo_data = payload.get("cpuinfo", {})
     cpuinfo_data = cpuinfo_data if isinstance(cpuinfo_data, dict) else {}
 
-    percent = _clamp_percent(
-        _first_present(cpu_data, ["total", "user", "percent"])
-    )
+    percent = _clamp_percent(_first_present(cpu_data, ["total", "user", "percent"]))
 
     model = _first_present(
         cpuinfo_data,
         ["brand", "model", "model_name", "cpu_model", "name"],
     )
-    model_str = _sanitize_text(model) if model is not None else None
+    model_str = _sanitize_text(model) if model is not None else _fallback_cpu_model()
 
     cores_logical = _to_int(
         _first_present(cpuinfo_data, ["cpu_cores", "logical_cores", "cpucore"])
@@ -237,6 +387,8 @@ def _extract_cpu_metric(payload: dict) -> CpuMetric:
         _first_present(cpuinfo_data, ["hz_current", "current", "cpu_hz"])
         or _first_present(cpu_data, ["hz_current", "freq", "frequency"])
     )
+    if frequency_mhz is None:
+        frequency_mhz = _fallback_cpu_frequency_mhz()
 
     return CpuMetric(
         percent=percent,
@@ -257,8 +409,6 @@ def _extract_memory_metric(payload: dict) -> MemoryMetric:
     total_gb = _bytes_to_gb(_first_present(mem_data, ["total"]))
     available_gb = _bytes_to_gb(_first_present(mem_data, ["available", "free"]))
 
-    # Physical RAM model often is not reliably available from Glances cross-platform.
-    # Keep nullable for now.
     model = None
 
     return MemoryMetric(
@@ -281,51 +431,50 @@ def _extract_gpu_metric(payload: dict) -> GpuMetric | None:
     elif isinstance(raw_gpu, dict):
         candidate = raw_gpu
 
-    if candidate is None:
-        return None
+    if candidate is not None:
+        model = _first_present(candidate, ["model", "name", "gpu_name"])
+        model_str = _sanitize_text(model) if model is not None else None
 
-    model = _first_present(candidate, ["model", "name", "gpu_name"])
-    model_str = _sanitize_text(model) if model is not None else None
-
-    percent = _clamp_percent_or_none(
-        _first_present(candidate, ["percent", "gpu_util", "utilization", "proc"])
-    )
-
-    used_gb = _bytes_to_gb(
-        _first_present(candidate, ["memory_used", "mem_used", "used_memory"])
-    )
-    total_gb = _bytes_to_gb(
-        _first_present(candidate, ["memory_total", "mem_total", "total_memory"])
-    )
-
-    # Some providers already return MB/GB instead of bytes.
-    if used_gb is None:
-        mem_used_raw = _to_float_or_none(
-            _first_present(candidate, ["memory_used_mb", "mem_used_mb"])
+        percent = _clamp_percent_or_none(
+            _first_present(candidate, ["percent", "gpu_util", "utilization", "proc"])
         )
-        if mem_used_raw is not None:
-            used_gb = round(mem_used_raw / 1024, 2)
 
-    if total_gb is None:
-        mem_total_raw = _to_float_or_none(
-            _first_present(candidate, ["memory_total_mb", "mem_total_mb"])
+        used_gb = _bytes_to_gb(
+            _first_present(candidate, ["memory_used", "mem_used", "used_memory"])
         )
-        if mem_total_raw is not None:
-            total_gb = round(mem_total_raw / 1024, 2)
+        total_gb = _bytes_to_gb(
+            _first_present(candidate, ["memory_total", "mem_total", "total_memory"])
+        )
 
-    temperature_c = _to_float_or_none(
-        _first_present(candidate, ["temperature", "temp", "temperature_c"])
-    )
-    if temperature_c is not None:
-        temperature_c = round(max(0.0, temperature_c), 2)
+        if used_gb is None:
+            mem_used_raw = _to_float_or_none(
+                _first_present(candidate, ["memory_used_mb", "mem_used_mb"])
+            )
+            if mem_used_raw is not None:
+                used_gb = round(mem_used_raw / 1024, 2)
 
-    return GpuMetric(
-        percent=percent,
-        used_gb=used_gb,
-        total_gb=total_gb,
-        model=model_str,
-        temperature_c=temperature_c,
-    )
+        if total_gb is None:
+            mem_total_raw = _to_float_or_none(
+                _first_present(candidate, ["memory_total_mb", "mem_total_mb"])
+            )
+            if mem_total_raw is not None:
+                total_gb = round(mem_total_raw / 1024, 2)
+
+        temperature_c = _to_float_or_none(
+            _first_present(candidate, ["temperature", "temp", "temperature_c"])
+        )
+        if temperature_c is not None:
+            temperature_c = round(max(0.0, temperature_c), 2)
+
+        return GpuMetric(
+            percent=percent,
+            used_gb=used_gb,
+            total_gb=total_gb,
+            model=model_str,
+            temperature_c=temperature_c,
+        )
+
+    return _fallback_nvidia_gpu() or _fallback_amd_gpu()
 
 
 def _extract_fans(payload: dict) -> list[FanMetric]:
@@ -346,22 +495,41 @@ def _extract_fans(payload: dict) -> list[FanMetric]:
         label_value = _first_present(item, ["label", "name", "sensor", "key"])
         label = _sanitize_text(label_value) if label_value is not None else "fan"
 
-        rpm = _to_float_or_none(_first_present(item, ["rpm", "speed", "value"]))
-        percent = _clamp_percent_or_none(_first_present(item, ["percent", "pct"]))
         status_value = _first_present(item, ["status", "state"])
         model_value = _first_present(item, ["model"])
 
-        # Only keep rows that actually look like fans.
         text_blob = " ".join(
             str(v) for v in [label_value, status_value, model_value] if v is not None
         ).lower()
+
+        rpm = _to_float_or_none(_first_present(item, ["rpm", "speed_rpm", "fan_rpm"]))
+        percent = _clamp_percent_or_none(_first_present(item, ["percent", "pct"]))
+
         looks_like_fan = (
             "fan" in text_blob
-            or rpm is not None
             or "rpm" in text_blob
+            or any(k in item for k in ["rpm", "speed_rpm", "fan_rpm"])
         )
 
-        if not looks_like_fan:
+        looks_like_temp_sensor = any(
+            bad in text_blob
+            for bad in [
+                "core ",
+                "package id",
+                "temp",
+                "junction",
+                "edge",
+                "tctl",
+                "tdie",
+                "radeon",
+                "gpu",
+            ]
+        )
+
+        if not looks_like_fan or looks_like_temp_sensor:
+            continue
+
+        if rpm is None and percent is None:
             continue
 
         fans.append(
