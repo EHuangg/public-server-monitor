@@ -1620,12 +1620,13 @@ export default function ServerCaseBlueprint({
             </svg>
 
             <div
-              className="pointer-events-none absolute left-6 z-20 flex items-end gap-4 text-[#3a2418]"
-              style={{ bottom: "calc(1.5rem + env(safe-area-inset-bottom))" }}
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-20"
+              style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
             >
-              <div className="relative h-[220px] w-[52px]">
-                <div className="pointer-events-none absolute left-1/2 top-1/2 w-[220px] -translate-x-1/2 -translate-y-1/2 rotate-90">
-                  <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+              <div className="pointer-events-none mx-4 flex items-end gap-4 rounded-sm border border-[#4e3221] bg-[#f6ead1]/92 px-4 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)] backdrop-blur-[2px] md:mx-6 md:w-fit">
+                <div className="relative h-[220px] w-[52px]">
+                  <div className="pointer-events-none absolute left-1/2 top-1/2 w-[220px] -translate-x-1/2 -translate-y-1/2 rotate-90">
+                    <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
                     <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
                       <span
                         ref={zoomScaleLabelRef}
@@ -1656,32 +1657,33 @@ export default function ServerCaseBlueprint({
                     </div>
                   </div>
                 </div>
-              </div>
-
-              <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
-                  <span>Scroll</span>
-                  <span ref={scrollProgressLabelRef} className="font-mono text-[#3a2418]">
-                    0%
-                  </span>
                 </div>
 
-                <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
-                  <div
-                    ref={scrollTrackRef}
-                    className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
-                    onPointerDown={startHudDrag("scroll")}
-                  >
+                <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                  <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+                    <span>Scroll</span>
+                    <span ref={scrollProgressLabelRef} className="font-mono text-[#3a2418]">
+                      0%
+                    </span>
+                  </div>
+
+                  <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
                     <div
-                      ref={scrollProgressFillRef}
-                      className="h-full bg-[#6b4a36] transition-[width] duration-150"
-                      style={{ width: "0%" }}
-                    />
-                    <div
-                      ref={scrollIndicatorRef}
-                      className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
-                      style={{ left: "0%" }}
-                    />
+                      ref={scrollTrackRef}
+                      className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
+                      onPointerDown={startHudDrag("scroll")}
+                    >
+                      <div
+                        ref={scrollProgressFillRef}
+                        className="h-full bg-[#6b4a36] transition-[width] duration-150"
+                        style={{ width: "0%" }}
+                      />
+                      <div
+                        ref={scrollIndicatorRef}
+                        className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                        style={{ left: "0%" }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
