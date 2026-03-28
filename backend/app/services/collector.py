@@ -7,8 +7,6 @@ from datetime import UTC, datetime
 import httpx
 from mcstatus import JavaServer
 
-import psutil
-
 from app.config import settings
 from app.models.schemas import (
     CpuMetric,
