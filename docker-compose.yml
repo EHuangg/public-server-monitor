@@ -60,7 +60,7 @@ services:
       - /sys/class/hwmon:/host_sys/class/hwmon:ro
       - /sys/class/drm:/host_sys/class/drm:ro
       - /sys/class/dmi/id:/host_sys/class/dmi/id:ro
-      - /sys/devices/system/cpu:/host_sys/devices/system/cpu:ro
+      - /sys/devices:/host_sys/devices:ro
       - /proc/cpuinfo:/host_proc/cpuinfo:ro
     depends_on:
       - collector
