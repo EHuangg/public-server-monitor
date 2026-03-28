@@ -291,12 +291,9 @@ def _extract_cpu_temperatures() -> list[TemperatureMetric]:
     temps.sort(key=sort_key)
     return temps
 
+
 def _extract_disks(payload: dict) -> list[DiskMetric]:
     disks: list[DiskMetric] = []
-    try:
-        disks = _extract_disks(payload)
-    except Exception:
-        disks = []
 
     fs_payload = payload.get("fs")
     candidates: list[dict] = []
@@ -346,6 +343,7 @@ def _extract_disks(payload: dict) -> list[DiskMetric]:
 
     return disks
 
+
 def _extract_gpu_temp_from_hwmon() -> float | None:
     for block in _extract_hwmon_sensor_blocks():
         base = block["base"]
@@ -372,8 +370,9 @@ def _extract_gpu_temp_from_hwmon() -> float | None:
 
             label = (_read_file(f"{base}/temp{idx}_label") or "").strip().lower()
 
-            # Prefer temp1 or unlabeled temp input for simple GPUs like your radeon output.
-            if label and not any(token in label for token in ["edge", "junction", "gpu", "temp"]):
+            if label and not any(
+                token in label for token in ["edge", "junction", "gpu", "temp"]
+            ):
                 continue
 
             return round(parsed / 1000.0, 2) if parsed > 1000 else round(parsed, 2)
@@ -871,6 +870,8 @@ async def fetch_sanitized_metrics() -> MetricsResponse:
     if not fans:
         fans = _fallback_hwmon_fans()
 
+    disks = _extract_disks(payload)
+
     uptime_seconds = _extract_uptime_seconds(payload)
     containers = _extract_docker_containers(payload)
     minecraft = _extract_minecraft_status()
@@ -885,6 +886,7 @@ async def fetch_sanitized_metrics() -> MetricsResponse:
         mem=mem,
         gpu=gpu,
         fans=fans,
+        disks=disks,
         uptime_seconds=uptime_seconds,
         docker=containers,
         minecraft=minecraft,
