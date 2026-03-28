@@ -489,7 +489,7 @@ function TelemetryWindow({
     <div
       ref={innerRef}
       className={[
-        "pointer-events-auto absolute z-20 w-[240px] overflow-hidden border",
+        "pointer-events-auto absolute z-20 w-[178px] overflow-hidden border md:w-[240px]",
         "border-[#4e3221] bg-[#f6ead1] text-[#3a2418]",
         "shadow-[4px_4px_0_rgba(78,50,33,0.18)]",
         "transition-[opacity,transform] duration-300 ease-out",
@@ -501,54 +501,46 @@ function TelemetryWindow({
         className="origin-[var(--panel-origin-x,50%)_var(--panel-origin-y,50%)] transition-transform duration-300 ease-out"
       >
         <div
-          className="cursor-grab border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2 active:cursor-grabbing"
+          className="cursor-grab border-b border-[#4e3221] bg-[#ead9b7] px-2 py-1.5 active:cursor-grabbing md:px-4 md:py-2"
           onPointerDown={onDragStart}
         >
-          <div className="flex items-center justify-start text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
+          <div className="flex items-center justify-start text-[8px] uppercase tracking-[0.16em] text-[#3a2418] md:text-[10px] md:tracking-[0.22em]">
             <span>{data.title}</span>
           </div>
         </div>
 
         <div
           ref={contentRef}
-          className="px-4 py-4 text-[#3a2418] transition-[opacity,transform] duration-300 ease-out"
+          className="px-2 py-2 text-[#3a2418] transition-[opacity,transform] duration-300 ease-out md:px-4 md:py-4"
         >
-          <div className="grid grid-cols-1 gap-2">
-            <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
-              <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+          <div className="grid grid-cols-1 gap-1 md:gap-2">
+            <div className="border border-[#4e3221] bg-[#efe1c3] px-2 py-1.5 md:px-3 md:py-3">
+              <div className="mb-0.5 text-[8px] uppercase tracking-[0.12em] text-[#6b4a36] md:mb-1 md:text-[10px] md:tracking-[0.18em]">
                 {data.primaryLabel}
               </div>
-              <div className="font-mono text-xl leading-none tracking-tight text-[#3a2418]">
+              <div className="font-mono text-sm leading-none tracking-tight text-[#3a2418] md:text-xl">
                 {data.primaryValue}
               </div>
             </div>
 
-            <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
-              <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+            <div className="border border-[#4e3221] bg-[#efe1c3] px-2 py-1.5 md:px-3 md:py-3">
+              <div className="mb-0.5 text-[8px] uppercase tracking-[0.12em] text-[#6b4a36] md:mb-1 md:text-[10px] md:tracking-[0.18em]">
                 {data.secondaryLabel}
               </div>
-              <div className="font-mono text-sm leading-none tracking-tight text-[#3a2418]">
+              <div className="font-mono text-[11px] leading-none tracking-tight text-[#3a2418] md:text-sm">
                 {data.secondaryValue}
               </div>
             </div>
           </div>
 
-          <div className="mt-4 text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
-            Resource Load
-          </div>
-
-          <div className="mt-1 font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
-            {formatPercent(data.percent)}
-          </div>
-
-          <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
-            <span>Occupancy</span>
-            <span className="font-mono text-[#3a2418]">
+          <div className="mt-1.5 flex items-center justify-between text-[8px] uppercase tracking-[0.12em] text-[#6b4a36] md:mt-4 md:block md:text-[11px] md:tracking-[0.18em]">
+            <span>Load</span>
+            <span className="font-mono text-[11px] text-[#3a2418] md:mt-1 md:block md:text-3xl md:leading-none md:tracking-tight">
               {formatPercent(data.percent)}
             </span>
           </div>
 
-          <div className="mt-2 h-2 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
+          <div className="mt-1.5 h-1.5 border border-[#4e3221] bg-[#e7d7b4] p-[2px] md:mt-2 md:h-2">
             <div
               className="h-full bg-[#6b4a36] transition-[width] duration-500"
               style={{ width: `${data.percent ?? 0}%` }}
@@ -1034,11 +1026,11 @@ export default function ServerCaseBlueprint({
       const zoomProgress = clamp01((controls.maxDistance - zoomDistance) / zoomRange);
 
       if (zoomFill) {
-        zoomFill.style.width = `${zoomProgress * 100}%`;
+        zoomFill.style.height = `${zoomProgress * 100}%`;
       }
 
       if (zoomIndicator) {
-        zoomIndicator.style.left = `${100 - zoomProgress * 100}%`;
+        zoomIndicator.style.bottom = `${zoomProgress * 100}%`;
       }
 
       if (zoomLabel) {
@@ -1107,6 +1099,7 @@ export default function ServerCaseBlueprint({
           revealProgress
         );
       }
+
     };
 
     const updateCasePositions = (progress: number) => {
@@ -1658,37 +1651,35 @@ export default function ServerCaseBlueprint({
             </svg>
 
             <div className="pointer-events-none absolute bottom-6 left-6 z-20 hidden items-end gap-4 text-[#3a2418] md:flex">
-              <div className="relative h-[220px] w-[52px]">
-                <div className="pointer-events-none absolute left-1/2 top-1/2 w-[220px] -translate-x-1/2 -translate-y-1/2 rotate-90">
-                  <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                    <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
-                      <span
-                        ref={zoomScaleLabelRef}
-                        className="font-mono tracking-normal text-[#3a2418]"
-                      >
-                        0%
-                      </span>
-                      <span>Zoom</span>
-                    </div>
+              <div className="border border-[#4e3221] bg-[#f6ead1] px-2 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                <div className="flex items-start gap-2">
+                  <div className="flex h-40 w-4 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+                  <div
+                    ref={zoomTrackRef}
+                    className="pointer-events-auto relative h-full w-full cursor-pointer overflow-visible"
+                    onPointerDown={startHudDrag("zoom", "y", true, zoomTrackRef)}
+                  >
+                    <div
+                      ref={zoomScaleFillRef}
+                      className="absolute bottom-0 left-0 w-full bg-[#6b4a36] transition-[height] duration-150"
+                      style={{ height: "0%" }}
+                    />
+                    <div
+                      ref={zoomIndicatorRef}
+                      className="absolute left-1/2 h-[3px] w-[calc(100%+8px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
+                      style={{ bottom: "0%" }}
+                    />
+                  </div>
+                </div>
 
-                    <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
-                      <div
-                        ref={zoomTrackRef}
-                        className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
-                        onPointerDown={startHudDrag("zoom", "x", true, zoomTrackRef)}
-                      >
-                        <div
-                          ref={zoomScaleFillRef}
-                          className="ml-auto h-full bg-[#6b4a36] transition-[width] duration-150"
-                          style={{ width: "0%" }}
-                        />
-                        <div
-                          ref={zoomIndicatorRef}
-                          className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
-                          style={{ left: "0%" }}
-                        />
-                      </div>
-                    </div>
+                  <div className="flex h-40 flex-col justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+                    <span className="[writing-mode:vertical-rl]">Zoom</span>
+                    <span
+                      ref={zoomScaleLabelRef}
+                      className="font-mono tracking-normal text-[#3a2418] [writing-mode:vertical-rl]"
+                    >
+                      0%
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1743,7 +1734,7 @@ export default function ServerCaseBlueprint({
                     />
                     <div
                       ref={mobileZoomIndicatorRef}
-                      className="absolute left-1/2 h-[3px] w-[calc(100%+12px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
+                      className="absolute left-1/2 h-[3px] w-[calc(100%+8px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
                       style={{ bottom: "0%" }}
                     />
                   </div>
@@ -1770,7 +1761,7 @@ export default function ServerCaseBlueprint({
                     />
                     <div
                       ref={mobileScrollIndicatorRef}
-                      className="absolute left-1/2 h-[3px] w-[calc(100%+12px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
+                      className="absolute left-1/2 h-[3px] w-[calc(100%+8px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
                       style={{ bottom: "0%" }}
                     />
                   </div>
