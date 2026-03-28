@@ -51,6 +51,7 @@ const HOVER_PARTS: Record<string, number> = {
 
 const RAM_PART_NAMES = ["RAM", "RAM001", "RAM002", "RAM003"];
 const CPU_PART_NAMES = ["CPU", "CPU001"];
+const MOTHERBOARD_PART_NAMES = ["MotherBoard"];
 
 const DVD_PREROLL_DIST = 0.5;
 const DVD_TRAY_DIST = 0.08;
@@ -87,6 +88,17 @@ const CONNECTOR_GAP = 20;
 type PanelKey = "cpu" | "ram";
 type Point = { x: number; y: number };
 type PanelPosition = { x: number; y: number };
+type ScreenAnchor = { x: number; y: number; visible: boolean };
+type PanelConfig = {
+  key: PanelKey;
+  partNames: string[];
+  revealStart: number;
+};
+
+const PANEL_CONFIGS: PanelConfig[] = [
+  { key: "cpu", partNames: CPU_PART_NAMES, revealStart: GROUP_2_START },
+  { key: "ram", partNames: RAM_PART_NAMES, revealStart: GROUP_2_START },
+];
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -442,6 +454,7 @@ export default function ServerCaseBlueprint({
   const ramPanelRef = useRef<HTMLDivElement>(null);
   const cpuPathRef = useRef<SVGPathElement>(null);
   const ramPathRef = useRef<SVGPathElement>(null);
+  const currentProgressRef = useRef(0);
   const dragStateRef = useRef<{
     panel: PanelKey;
     pointerId: number;
@@ -581,6 +594,7 @@ export default function ServerCaseBlueprint({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enableZoom = false;
+    controls.enablePan = false;
 
     const tl = createTimeline({ autoplay: false });
     const scrollState = { p: 0 };
@@ -597,7 +611,7 @@ export default function ServerCaseBlueprint({
     const hoverTarget = new Map<string, number>();
     const hoverCurrent = new Map<string, number>();
     const hoverBaseWorld = new Map<string, Vector3>();
-    const telemetryAnchorWorld = new Map<"cpu" | "ram", Vector3>();
+    const telemetryAnchorWorld = new Map<PanelKey, Vector3>();
 
     let maxDistance = 0.45;
     let rootGroup: Group | null = null;
@@ -668,7 +682,7 @@ export default function ServerCaseBlueprint({
     const setConnectorPath = (
       path: SVGPathElement | null,
       panel: HTMLDivElement | null,
-      anchor: { x: number; y: number; visible: boolean } | null
+      anchor: ScreenAnchor | null
     ) => {
       if (!path || !panel || !anchor) return;
 
@@ -680,30 +694,47 @@ export default function ServerCaseBlueprint({
       path.style.opacity = anchor.visible ? "1" : "0";
     };
 
+    const setPanelVisibility = (panel: HTMLDivElement | null, isVisible: boolean) => {
+      if (!panel) return;
+      panel.style.opacity = isVisible ? "1" : "0";
+      panel.style.visibility = isVisible ? "visible" : "hidden";
+      panel.style.pointerEvents = isVisible ? "auto" : "none";
+    };
+
     const updateTelemetryOverlay = () => {
-      const cpuAnchorWorld = telemetryAnchorWorld.get("cpu");
-      const ramAnchorWorld = telemetryAnchorWorld.get("ram");
+      const panelRefs: Record<PanelKey, HTMLDivElement | null> = {
+        cpu: cpuPanelRef.current,
+        ram: ramPanelRef.current,
+      };
+      const pathRefs: Record<PanelKey, SVGPathElement | null> = {
+        cpu: cpuPathRef.current,
+        ram: ramPathRef.current,
+      };
 
-      const cpuAnchor = cpuAnchorWorld
-        ? projectWorldToScreen(
-            cpuAnchorWorld,
-            camera,
-            renderer.domElement.width,
-            renderer.domElement.height
-          )
-        : null;
+      for (const panelConfig of PANEL_CONFIGS) {
+        const anchorWorld = telemetryAnchorWorld.get(panelConfig.key);
+        const anchor: ScreenAnchor | null = anchorWorld
+          ? projectWorldToScreen(
+              anchorWorld,
+              camera,
+              renderer.domElement.width,
+              renderer.domElement.height
+            )
+          : null;
+        const isVisible =
+          currentProgressRef.current >= panelConfig.revealStart &&
+          Boolean(anchor?.visible);
 
-      const ramAnchor = ramAnchorWorld
-        ? projectWorldToScreen(
-            ramAnchorWorld,
-            camera,
-            renderer.domElement.width,
-            renderer.domElement.height
-          )
-        : null;
+        setPanelVisibility(panelRefs[panelConfig.key], isVisible);
 
-      setConnectorPath(cpuPathRef.current, cpuPanelRef.current, cpuAnchor);
-      setConnectorPath(ramPathRef.current, ramPanelRef.current, ramAnchor);
+        if (!isVisible) {
+          const path = pathRefs[panelConfig.key];
+          if (path) path.style.opacity = "0";
+          continue;
+        }
+
+        setConnectorPath(pathRefs[panelConfig.key], panelRefs[panelConfig.key], anchor);
+      }
     };
 
     const updateCasePositions = (progress: number) => {
@@ -814,6 +845,8 @@ export default function ServerCaseBlueprint({
         currentProgress = targetProgress;
       }
 
+      currentProgressRef.current = currentProgress;
+
       tl.seek(currentProgress * tl.duration);
       updateCasePositions(currentProgress);
 
@@ -875,8 +908,16 @@ export default function ServerCaseBlueprint({
       const maxDim = Math.max(size.x, size.y, size.z, 0.001);
       const dist = maxDim * 1.8;
 
-      camera.position.set(dist * 0.55, dist * 0.35, dist * 0.65);
-      camera.lookAt(0, 0, 0);
+      const motherboardCenter =
+        getAverageWorldPosition(MOTHERBOARD_PART_NAMES) ?? new Vector3(0, 0, 0);
+
+      controls.target.copy(motherboardCenter);
+      camera.position.set(
+        motherboardCenter.x + dist * 0.55,
+        motherboardCenter.y + dist * 0.35,
+        motherboardCenter.z + dist * 0.65
+      );
+      camera.lookAt(motherboardCenter);
 
       const explodeScale = Math.max(
         0.25,
@@ -974,11 +1015,10 @@ export default function ServerCaseBlueprint({
         hoverCurrent.set(name, 0);
       }
 
-      const cpuStart = getAverageWorldPosition(CPU_PART_NAMES);
-      const ramStart = getAverageWorldPosition(RAM_PART_NAMES);
-
-      if (cpuStart) telemetryAnchorWorld.set("cpu", cpuStart.clone());
-      if (ramStart) telemetryAnchorWorld.set("ram", ramStart.clone());
+      for (const panelConfig of PANEL_CONFIGS) {
+        const start = getAverageWorldPosition(panelConfig.partNames);
+        if (start) telemetryAnchorWorld.set(panelConfig.key, start.clone());
+      }
 
       onScroll();
       loop();
@@ -1050,7 +1090,7 @@ export default function ServerCaseBlueprint({
 
           <div
             ref={overlayRef}
-            className="absolute inset-0 z-10"
+            className="pointer-events-none absolute inset-0 z-10"
           >
             <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
               <path
