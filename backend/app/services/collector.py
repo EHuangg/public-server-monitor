@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from app.models.schemas import (
     MemoryMetric,
     MetricsResponse,
     MinecraftMetric,
+    TemperatureMetric,
 )
 
 PRIVATE_IPV4_PATTERN = re.compile(
@@ -180,6 +182,150 @@ def _fallback_cpu_frequency_mhz() -> float | None:
     return None
 
 
+def _extract_hwmon_sensor_blocks() -> list[dict]:
+    blocks: list[dict] = []
+    hwmon_root = "/host_sys/class/hwmon"
+
+    try:
+        hwmon_dirs = sorted(os.listdir(hwmon_root))
+    except Exception:
+        return blocks
+
+    for hwmon_dir in hwmon_dirs:
+        base = f"{hwmon_root}/{hwmon_dir}"
+        chip_name = _read_file(f"{base}/name")
+
+        try:
+            files = os.listdir(base)
+        except Exception:
+            continue
+
+        blocks.append(
+            {
+                "base": base,
+                "chip_name": chip_name,
+                "files": files,
+            }
+        )
+
+    return blocks
+
+
+def _extract_cpu_temperatures() -> list[TemperatureMetric]:
+    temps: list[TemperatureMetric] = []
+    seen: set[tuple[str, float]] = set()
+
+    for block in _extract_hwmon_sensor_blocks():
+        base = block["base"]
+        chip_name = (block["chip_name"] or "").strip().lower()
+        files = block["files"]
+
+        for filename in files:
+            match = re.fullmatch(r"temp(\d+)_input", filename)
+            if not match:
+                continue
+
+            idx = match.group(1)
+            raw_temp = _read_file(f"{base}/{filename}")
+            parsed = _to_float_or_none(raw_temp)
+            if parsed is None:
+                continue
+
+            celsius = round(parsed / 1000.0, 2) if parsed > 1000 else round(parsed, 2)
+
+            label = _read_file(f"{base}/temp{idx}_label") or f"Temp {idx}"
+            label_clean = _sanitize_text(label)
+
+            text_blob = f"{chip_name} {label_clean}".lower()
+
+            looks_like_cpu_temp = any(
+                token in text_blob
+                for token in [
+                    "core ",
+                    "package id",
+                    "physical id",
+                    "tdie",
+                    "tctl",
+                    "cpu",
+                    "k10temp",
+                    "coretemp",
+                ]
+            )
+
+            looks_like_gpu_temp = any(
+                token in text_blob
+                for token in [
+                    "gpu",
+                    "radeon",
+                    "junction",
+                    "edge",
+                    "amdgpu",
+                    "nvme",
+                ]
+            )
+
+            if not looks_like_cpu_temp or looks_like_gpu_temp:
+                continue
+
+            key = (label_clean, celsius)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            temps.append(
+                TemperatureMetric(
+                    label=label_clean,
+                    celsius=celsius,
+                )
+            )
+
+    def sort_key(t: TemperatureMetric) -> tuple[int, str]:
+        m = re.search(r"core\s+(\d+)", t.label.lower())
+        if m:
+            return (0, f"{int(m.group(1)):03d}")
+        if "package id" in t.label.lower():
+            return (1, t.label.lower())
+        return (2, t.label.lower())
+
+    temps.sort(key=sort_key)
+    return temps
+
+
+def _extract_gpu_temp_from_hwmon() -> float | None:
+    for block in _extract_hwmon_sensor_blocks():
+        base = block["base"]
+        chip_name = (block["chip_name"] or "").strip().lower()
+        files = block["files"]
+
+        looks_like_gpu_chip = any(
+            token in chip_name for token in ["radeon", "amdgpu", "nouveau", "nvidia"]
+        )
+
+        if not looks_like_gpu_chip:
+            continue
+
+        for filename in files:
+            match = re.fullmatch(r"temp(\d+)_input", filename)
+            if not match:
+                continue
+
+            idx = match.group(1)
+            raw_temp = _read_file(f"{base}/{filename}")
+            parsed = _to_float_or_none(raw_temp)
+            if parsed is None:
+                continue
+
+            label = (_read_file(f"{base}/temp{idx}_label") or "").strip().lower()
+
+            # Prefer temp1 or unlabeled temp input for simple GPUs like your radeon output.
+            if label and not any(token in label for token in ["edge", "junction", "gpu", "temp"]):
+                continue
+
+            return round(parsed / 1000.0, 2) if parsed > 1000 else round(parsed, 2)
+
+    return None
+
+
 def _fallback_nvidia_gpu() -> GpuMetric | None:
     output = _run_command(
         [
@@ -223,36 +369,58 @@ def _fallback_nvidia_gpu() -> GpuMetric | None:
 
 
 def _fallback_amd_gpu() -> GpuMetric | None:
-    busy = _read_file("/host_sys/class/drm/card0/device/gpu_busy_percent")
-    vram_used = _read_file("/host_sys/class/drm/card0/device/mem_info_vram_used")
-    vram_total = _read_file("/host_sys/class/drm/card0/device/mem_info_vram_total")
-    product_name = _read_file("/host_sys/class/drm/card0/device/product_name")
+    drm_root = "/host_sys/class/drm"
 
-    temperature_c = None
-    for path in [
-        "/host_sys/class/drm/card0/device/hwmon/hwmon0/temp1_input",
-        "/host_sys/class/hwmon/hwmon0/temp1_input",
-        "/sys/class/drm/card0/device/hwmon/hwmon0/temp1_input",
-        "/sys/class/hwmon/hwmon0/temp1_input",
-    ]:
-        raw = _read_file(path)
-        if raw is not None:
-            parsed = _to_float_or_none(raw)
-            if parsed is not None:
-                temperature_c = round(parsed / 1000.0, 2)
-                break
-
-    if not any([busy, vram_used, vram_total, product_name]):
+    try:
+        card_names = sorted(
+            name for name in os.listdir(drm_root) if re.fullmatch(r"card\d+", name)
+        )
+    except Exception:
         return None
 
-    return GpuMetric(
-        percent=_clamp_percent_or_none(busy),
-        used_gb=_bytes_to_gb(vram_used),
-        total_gb=_bytes_to_gb(vram_total),
-        model=_sanitize_text(product_name) if product_name else "AMD GPU",
-        temperature_c=temperature_c,
-    )
-    
+    for card_name in card_names:
+        base = f"{drm_root}/{card_name}/device"
+
+        busy = _read_file(f"{base}/gpu_busy_percent")
+        vram_used = _read_file(f"{base}/mem_info_vram_used")
+        vram_total = _read_file(f"{base}/mem_info_vram_total")
+        product_name = _read_file(f"{base}/product_name")
+        vendor = _read_file(f"{base}/vendor")
+
+        if vendor is not None and vendor.strip().lower() != "0x1002":
+            continue
+
+        temperature_c = None
+        hwmon_root = f"{base}/hwmon"
+        try:
+            hwmons = sorted(os.listdir(hwmon_root))
+        except Exception:
+            hwmons = []
+
+        for hwmon_name in hwmons:
+            raw = _read_file(f"{hwmon_root}/{hwmon_name}/temp1_input")
+            if raw is not None:
+                parsed = _to_float_or_none(raw)
+                if parsed is not None:
+                    temperature_c = round(parsed / 1000.0, 2)
+                    break
+
+        if temperature_c is None:
+            temperature_c = _extract_gpu_temp_from_hwmon()
+
+        if not any([busy, vram_used, vram_total, product_name, temperature_c]):
+            continue
+
+        return GpuMetric(
+            percent=_clamp_percent_or_none(busy),
+            used_gb=_bytes_to_gb(vram_used),
+            total_gb=_bytes_to_gb(vram_total),
+            model=_sanitize_text(product_name) if product_name else "AMD GPU",
+            temperature_c=temperature_c,
+        )
+
+    return None
+
 
 def _extract_docker_containers(payload: dict) -> list[DockerContainerMetric]:
     docker_payload = payload.get("docker", None)
@@ -388,6 +556,24 @@ def _extract_cpu_metric(payload: dict) -> CpuMetric:
     if cores_physical <= 0:
         cores_physical = None
 
+    cpuinfo = _read_file("/host_proc/cpuinfo") or _read_file("/proc/cpuinfo")
+    if cores_physical is None and cpuinfo:
+        for line in cpuinfo.splitlines():
+            if line.lower().startswith("cpu cores"):
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    parsed = _to_int(parts[1].strip(), default=0)
+                    if parsed > 0:
+                        cores_physical = parsed
+                        break
+
+    if cores_logical is None and cpuinfo:
+        logical_count = sum(
+            1 for line in cpuinfo.splitlines() if line.lower().startswith("processor")
+        )
+        if logical_count > 0:
+            cores_logical = logical_count
+
     frequency_mhz = _mhz_from_hz_or_mhz(
         _first_present(cpuinfo_data, ["hz_current", "current", "cpu_hz"])
         or _first_present(cpu_data, ["hz_current", "freq", "frequency"])
@@ -401,6 +587,7 @@ def _extract_cpu_metric(payload: dict) -> CpuMetric:
         cores_physical=cores_physical,
         cores_logical=cores_logical,
         frequency_mhz=frequency_mhz,
+        temperatures=_extract_cpu_temperatures(),
     )
 
 
@@ -470,6 +657,8 @@ def _extract_gpu_metric(payload: dict) -> GpuMetric | None:
         )
         if temperature_c is not None:
             temperature_c = round(max(0.0, temperature_c), 2)
+        else:
+            temperature_c = _extract_gpu_temp_from_hwmon()
 
         return GpuMetric(
             percent=percent,
@@ -550,6 +739,50 @@ def _extract_fans(payload: dict) -> list[FanMetric]:
     return fans
 
 
+def _fallback_hwmon_fans() -> list[FanMetric]:
+    fans: list[FanMetric] = []
+    hwmon_root = "/host_sys/class/hwmon"
+
+    try:
+        hwmon_dirs = sorted(os.listdir(hwmon_root))
+    except Exception:
+        return fans
+
+    for hwmon_dir in hwmon_dirs:
+        base = f"{hwmon_root}/{hwmon_dir}"
+        chip_name = _read_file(f"{base}/name")
+
+        try:
+            files = os.listdir(base)
+        except Exception:
+            continue
+
+        for filename in files:
+            match = re.fullmatch(r"fan(\d+)_input", filename)
+            if not match:
+                continue
+
+            idx = match.group(1)
+            raw_rpm = _read_file(f"{base}/{filename}")
+            rpm = _to_float_or_none(raw_rpm)
+            if rpm is None or rpm <= 0:
+                continue
+
+            label = _read_file(f"{base}/fan{idx}_label") or f"{chip_name or 'fan'} {idx}"
+
+            fans.append(
+                FanMetric(
+                    label=_sanitize_text(label),
+                    rpm=round(rpm, 2),
+                    percent=None,
+                    status=None,
+                    model=_sanitize_text(chip_name) if chip_name else None,
+                )
+            )
+
+    return fans
+
+
 def _calculate_health(
     cpu_percent: float,
     mem_percent: float,
@@ -580,6 +813,9 @@ async def fetch_sanitized_metrics() -> MetricsResponse:
     mem = _extract_memory_metric(payload)
     gpu = _extract_gpu_metric(payload)
     fans = _extract_fans(payload)
+    if not fans:
+        fans = _fallback_hwmon_fans()
+
     uptime_seconds = _extract_uptime_seconds(payload)
     containers = _extract_docker_containers(payload)
     minecraft = _extract_minecraft_status()
