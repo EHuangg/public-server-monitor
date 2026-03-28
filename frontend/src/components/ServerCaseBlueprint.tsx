@@ -84,6 +84,7 @@ const MIN_VISIBLE_SCALE = 0.0001;
 const PANEL_WIDTH = 240;
 const PANEL_MARGIN = 24;
 const CONNECTOR_GAP = 20;
+const PANEL_REVEAL_DURATION = 0.1;
 
 type PanelKey = "cpu" | "ram";
 type Point = { x: number; y: number };
@@ -176,7 +177,73 @@ function getPathLength(points: Point[]): number {
   return length;
 }
 
-function buildOrthogonalPath(anchor: Point, panelRect: DOMRect, overlayRect: DOMRect): string {
+function getPointAtLength(points: Point[], distance: number): Point {
+  if (points.length === 0) return { x: 0, y: 0 };
+  if (points.length === 1) return points[0];
+
+  let remaining = Math.max(0, distance);
+
+  for (let i = 1; i < points.length; i += 1) {
+    const start = points[i - 1];
+    const end = points[i];
+    const segmentLength = Math.abs(end.x - start.x) + Math.abs(end.y - start.y);
+
+    if (segmentLength === 0) continue;
+    if (remaining <= segmentLength) {
+      const t = remaining / segmentLength;
+      return {
+        x: start.x + (end.x - start.x) * t,
+        y: start.y + (end.y - start.y) * t,
+      };
+    }
+
+    remaining -= segmentLength;
+  }
+
+  return points[points.length - 1];
+}
+
+function buildPartialOrthogonalPath(
+  points: Point[],
+  startDistance: number,
+  endDistance: number
+): string {
+  if (points.length === 0) return "";
+
+  const totalLength = getPathLength(points);
+  const clampedStart = clamp(startDistance, 0, totalLength);
+  const clampedEnd = clamp(endDistance, clampedStart, totalLength);
+
+  if (clampedEnd <= clampedStart) {
+    const point = getPointAtLength(points, clampedStart);
+    return `M ${point.x} ${point.y}`;
+  }
+
+  const pathPoints: Point[] = [getPointAtLength(points, clampedStart)];
+  let traversed = 0;
+
+  for (let i = 1; i < points.length; i += 1) {
+    const segmentStart = points[i - 1];
+    const segmentEnd = points[i];
+    const segmentLength = Math.abs(segmentEnd.x - segmentStart.x) + Math.abs(segmentEnd.y - segmentStart.y);
+    const nextTraversed = traversed + segmentLength;
+
+    if (segmentLength > 0 && nextTraversed > clampedStart && nextTraversed < clampedEnd) {
+      pathPoints.push(segmentEnd);
+    }
+
+    traversed = nextTraversed;
+  }
+
+  pathPoints.push(getPointAtLength(points, clampedEnd));
+  return buildOrthogonalPath(normalizePath(pathPoints));
+}
+
+function buildOrthogonalPoints(
+  anchor: Point,
+  panelRect: DOMRect,
+  overlayRect: DOMRect
+): Point[] {
   const candidates = getPanelConnectionPoint(panelRect, overlayRect, anchor).flatMap(
     ({ port, outside }) => {
       const horizontalFirst = normalizePath([
@@ -202,8 +269,14 @@ function buildOrthogonalPath(anchor: Point, panelRect: DOMRect, overlayRect: DOM
     return getPathLength(candidate) < getPathLength(shortest) ? candidate : shortest;
   }, null as Point[] | null);
 
-  if (!best) return "";
-  return best.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  return best ?? [];
+}
+
+function buildOrthogonalPath(points: Point[]): string {
+  if (points.length === 0) return "";
+  return points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
 }
 
 function applyBlueprintStyle(mesh: Mesh): void {
@@ -368,11 +441,15 @@ function extractRamTelemetry(metrics: MetricsResponse | null): PanelData {
 function TelemetryWindow({
   data,
   innerRef,
+  shellRef,
+  contentRef,
   position,
   onDragStart,
 }: {
   data: PanelData;
   innerRef: RefObject<HTMLDivElement>;
+  shellRef: RefObject<HTMLDivElement>;
+  contentRef: RefObject<HTMLDivElement>;
   position: PanelPosition;
   onDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
@@ -383,59 +460,68 @@ function TelemetryWindow({
         "pointer-events-auto absolute z-20 w-[240px] overflow-hidden border",
         "border-[#4e3221] bg-[#f6ead1] text-[#3a2418]",
         "shadow-[4px_4px_0_rgba(78,50,33,0.18)]",
+        "transition-[opacity,transform] duration-300 ease-out",
       ].join(" ")}
       style={{ left: position.x, top: position.y }}
     >
       <div
-        className="cursor-grab border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2 active:cursor-grabbing"
-        onPointerDown={onDragStart}
+        ref={shellRef}
+        className="origin-[var(--panel-origin-x,50%)_var(--panel-origin-y,50%)] transition-transform duration-300 ease-out"
       >
-        <div className="flex items-center justify-start text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
-          <span>{data.title}</span>
-        </div>
-      </div>
-
-      <div className="px-4 py-4 text-[#3a2418]">
-        <div className="grid grid-cols-1 gap-2">
-          <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
-            <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
-              {data.primaryLabel}
-            </div>
-            <div className="font-mono text-xl leading-none tracking-tight text-[#3a2418]">
-              {data.primaryValue}
-            </div>
-          </div>
-
-          <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
-            <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
-              {data.secondaryLabel}
-            </div>
-            <div className="font-mono text-sm leading-none tracking-tight text-[#3a2418]">
-              {data.secondaryValue}
-            </div>
+        <div
+          className="cursor-grab border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2 active:cursor-grabbing"
+          onPointerDown={onDragStart}
+        >
+          <div className="flex items-center justify-start text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
+            <span>{data.title}</span>
           </div>
         </div>
 
-        <div className="mt-4 text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
-          Resource Load
-        </div>
+        <div
+          ref={contentRef}
+          className="px-4 py-4 text-[#3a2418] transition-[opacity,transform] duration-300 ease-out"
+        >
+          <div className="grid grid-cols-1 gap-2">
+            <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
+              <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+                {data.primaryLabel}
+              </div>
+              <div className="font-mono text-xl leading-none tracking-tight text-[#3a2418]">
+                {data.primaryValue}
+              </div>
+            </div>
 
-        <div className="mt-1 font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
-          {formatPercent(data.percent)}
-        </div>
+            <div className="border border-[#4e3221] bg-[#efe1c3] px-3 py-3">
+              <div className="mb-1 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+                {data.secondaryLabel}
+              </div>
+              <div className="font-mono text-sm leading-none tracking-tight text-[#3a2418]">
+                {data.secondaryValue}
+              </div>
+            </div>
+          </div>
 
-        <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
-          <span>Occupancy</span>
-          <span className="font-mono text-[#3a2418]">
+          <div className="mt-4 text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
+            Resource Load
+          </div>
+
+          <div className="mt-1 font-mono text-3xl leading-none tracking-tight text-[#3a2418]">
             {formatPercent(data.percent)}
-          </span>
-        </div>
+          </div>
 
-        <div className="mt-2 h-2 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
-          <div
-            className="h-full bg-[#6b4a36] transition-[width] duration-500"
-            style={{ width: `${data.percent ?? 0}%` }}
-          />
+          <div className="mt-3 flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-[#6b4a36]">
+            <span>Occupancy</span>
+            <span className="font-mono text-[#3a2418]">
+              {formatPercent(data.percent)}
+            </span>
+          </div>
+
+          <div className="mt-2 h-2 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
+            <div
+              className="h-full bg-[#6b4a36] transition-[width] duration-500"
+              style={{ width: `${data.percent ?? 0}%` }}
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -452,14 +538,30 @@ export default function ServerCaseBlueprint({
   const overlayRef = useRef<HTMLDivElement>(null);
   const cpuPanelRef = useRef<HTMLDivElement>(null);
   const ramPanelRef = useRef<HTMLDivElement>(null);
+  const cpuShellRef = useRef<HTMLDivElement>(null);
+  const ramShellRef = useRef<HTMLDivElement>(null);
+  const cpuContentRef = useRef<HTMLDivElement>(null);
+  const ramContentRef = useRef<HTMLDivElement>(null);
   const cpuPathRef = useRef<SVGPathElement>(null);
   const ramPathRef = useRef<SVGPathElement>(null);
+  const scrollTrackRef = useRef<HTMLDivElement>(null);
+  const scrollProgressFillRef = useRef<HTMLDivElement>(null);
+  const scrollProgressLabelRef = useRef<HTMLSpanElement>(null);
+  const zoomTrackRef = useRef<HTMLDivElement>(null);
+  const zoomScaleFillRef = useRef<HTMLDivElement>(null);
+  const zoomScaleLabelRef = useRef<HTMLSpanElement>(null);
   const currentProgressRef = useRef(0);
+  const setScrollProgressRef = useRef<(progress: number) => void>(() => {});
+  const setZoomProgressRef = useRef<(progress: number) => void>(() => {});
   const dragStateRef = useRef<{
     panel: PanelKey;
     pointerId: number;
     offsetX: number;
     offsetY: number;
+  } | null>(null);
+  const hudDragStateRef = useRef<{
+    control: "scroll" | "zoom";
+    pointerId: number;
   } | null>(null);
   const didInitPanelPositionsRef = useRef(false);
 
@@ -559,6 +661,46 @@ export default function ServerCaseBlueprint({
       window.removeEventListener("pointermove", movePanel);
       window.removeEventListener("pointerup", stopDragging);
       window.removeEventListener("pointercancel", stopDragging);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateHudDrag = (event: PointerEvent) => {
+      const dragState = hudDragStateRef.current;
+      if (!dragState) return;
+
+      if (dragState.control === "scroll") {
+        const track = scrollTrackRef.current;
+        if (!track) return;
+
+        const rect = track.getBoundingClientRect();
+        const progress = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+        setScrollProgressRef.current(progress);
+        return;
+      }
+
+      const track = zoomTrackRef.current;
+      if (!track) return;
+
+      const rect = track.getBoundingClientRect();
+      const progress = clamp((rect.bottom - event.clientY) / Math.max(1, rect.height), 0, 1);
+      setZoomProgressRef.current(progress);
+    };
+
+    const stopHudDrag = (event: PointerEvent) => {
+      const dragState = hudDragStateRef.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      hudDragStateRef.current = null;
+    };
+
+    window.addEventListener("pointermove", updateHudDrag);
+    window.addEventListener("pointerup", stopHudDrag);
+    window.addEventListener("pointercancel", stopHudDrag);
+
+    return () => {
+      window.removeEventListener("pointermove", updateHudDrag);
+      window.removeEventListener("pointerup", stopHudDrag);
+      window.removeEventListener("pointercancel", stopHudDrag);
     };
   }, []);
 
@@ -682,29 +824,103 @@ export default function ServerCaseBlueprint({
     const setConnectorPath = (
       path: SVGPathElement | null,
       panel: HTMLDivElement | null,
-      anchor: ScreenAnchor | null
+      shell: HTMLDivElement | null,
+      content: HTMLDivElement | null,
+      anchor: ScreenAnchor | null,
+      revealProgress: number
     ) => {
       if (!path || !panel || !anchor) return;
 
       const overlayRect = overlay.getBoundingClientRect();
       const panelRect = panel.getBoundingClientRect();
-      const d = buildOrthogonalPath(anchor, panelRect, overlayRect);
+      const points = buildOrthogonalPoints(anchor, panelRect, overlayRect);
+      const fullPath = buildOrthogonalPath(points);
+      const endPoint = points[points.length - 1];
+      const lineProgress = clamp(revealProgress / 0.55, 0, 1);
+      const shellProgress = clamp((revealProgress - 0.55) / 0.25, 0, 1);
+      const contentProgress = clamp((revealProgress - 0.8) / 0.2, 0, 1);
+      const totalLength = getPathLength(points);
+      const midpoint = totalLength * 0.5;
+      const visibleHalf = totalLength * 0.5 * lineProgress;
+      const partialPath =
+        points.length > 1
+          ? buildPartialOrthogonalPath(
+              points,
+              midpoint - visibleHalf,
+              midpoint + visibleHalf
+            )
+          : fullPath;
 
-      path.setAttribute("d", d);
-      path.style.opacity = anchor.visible ? "1" : "0";
+      path.setAttribute("d", partialPath);
+      path.style.strokeDasharray = "";
+      path.style.strokeDashoffset = "";
+
+      path.style.opacity = revealProgress > 0 && anchor.visible ? "1" : "0";
+
+      const isVisible = revealProgress > 0;
+      panel.style.opacity = `${clamp(revealProgress * 1.25, 0, 1)}`;
+      panel.style.visibility = isVisible ? "visible" : "hidden";
+      panel.style.pointerEvents = revealProgress >= 0.99 ? "auto" : "none";
+
+      if (shell) {
+        const originX = endPoint
+          ? `${clamp(((endPoint.x - (panelRect.left - overlayRect.left)) / Math.max(1, panelRect.width)) * 100, 0, 100)}%`
+          : "50%";
+        const originY = endPoint
+          ? `${clamp(((endPoint.y - (panelRect.top - overlayRect.top)) / Math.max(1, panelRect.height)) * 100, 0, 100)}%`
+          : "50%";
+
+        shell.style.setProperty("--panel-origin-x", originX);
+        shell.style.setProperty("--panel-origin-y", originY);
+        shell.style.transform = `scale(${0.92 + shellProgress * 0.08})`;
+        shell.style.opacity = `${shellProgress}`;
+      }
+
+      if (content) {
+        content.style.opacity = `${contentProgress}`;
+        content.style.transform = `translateY(${(1 - contentProgress) * 8}px)`;
+      }
     };
 
-    const setPanelVisibility = (panel: HTMLDivElement | null, isVisible: boolean) => {
-      if (!panel) return;
-      panel.style.opacity = isVisible ? "1" : "0";
-      panel.style.visibility = isVisible ? "visible" : "hidden";
-      panel.style.pointerEvents = isVisible ? "auto" : "none";
+    const updateHud = () => {
+      const scrollFill = scrollProgressFillRef.current;
+      const scrollLabel = scrollProgressLabelRef.current;
+      const zoomFill = zoomScaleFillRef.current;
+      const zoomLabel = zoomScaleLabelRef.current;
+
+      if (scrollFill) {
+        scrollFill.style.width = `${currentProgressRef.current * 100}%`;
+      }
+
+      if (scrollLabel) {
+        scrollLabel.textContent = `${Math.round(currentProgressRef.current * 100)}%`;
+      }
+
+      const zoomRange = Math.max(0.0001, controls.maxDistance - controls.minDistance);
+      const zoomDistance = camera.position.distanceTo(controls.target);
+      const zoomProgress = clamp01((controls.maxDistance - zoomDistance) / zoomRange);
+
+      if (zoomFill) {
+        zoomFill.style.height = `${zoomProgress * 100}%`;
+      }
+
+      if (zoomLabel) {
+        zoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`;
+      }
     };
 
     const updateTelemetryOverlay = () => {
       const panelRefs: Record<PanelKey, HTMLDivElement | null> = {
         cpu: cpuPanelRef.current,
         ram: ramPanelRef.current,
+      };
+      const shellRefs: Record<PanelKey, HTMLDivElement | null> = {
+        cpu: cpuShellRef.current,
+        ram: ramShellRef.current,
+      };
+      const contentRefs: Record<PanelKey, HTMLDivElement | null> = {
+        cpu: cpuContentRef.current,
+        ram: ramContentRef.current,
       };
       const pathRefs: Record<PanelKey, SVGPathElement | null> = {
         cpu: cpuPathRef.current,
@@ -721,19 +937,22 @@ export default function ServerCaseBlueprint({
               renderer.domElement.height
             )
           : null;
-        const isVisible =
-          currentProgressRef.current >= panelConfig.revealStart &&
-          Boolean(anchor?.visible);
+        const revealProgress = anchor?.visible
+          ? getPhaseProgress(
+              currentProgressRef.current,
+              panelConfig.revealStart,
+              panelConfig.revealStart + PANEL_REVEAL_DURATION
+            )
+          : 0;
 
-        setPanelVisibility(panelRefs[panelConfig.key], isVisible);
-
-        if (!isVisible) {
-          const path = pathRefs[panelConfig.key];
-          if (path) path.style.opacity = "0";
-          continue;
-        }
-
-        setConnectorPath(pathRefs[panelConfig.key], panelRefs[panelConfig.key], anchor);
+        setConnectorPath(
+          pathRefs[panelConfig.key],
+          panelRefs[panelConfig.key],
+          shellRefs[panelConfig.key],
+          contentRefs[panelConfig.key],
+          anchor,
+          revealProgress
+        );
       }
     };
 
@@ -832,6 +1051,34 @@ export default function ServerCaseBlueprint({
       return clamp01(scrolled / totalScrollable);
     };
 
+    const setScrollProgress = (progress: number) => {
+      const clamped = clamp01(progress);
+      const rect = section.getBoundingClientRect();
+      const absoluteTop = window.scrollY + rect.top;
+      const totalScrollable = Math.max(1, rect.height - window.innerHeight);
+
+      targetProgress = clamped;
+      window.scrollTo({
+        top: absoluteTop + clamped * totalScrollable,
+        behavior: "auto",
+      });
+    };
+
+    const setZoomProgress = (progress: number) => {
+      const clamped = clamp01(progress);
+      const desiredDistance =
+        controls.maxDistance - clamped * (controls.maxDistance - controls.minDistance);
+      const direction = camera.position.clone().sub(controls.target).normalize();
+
+      camera.position.copy(
+        controls.target.clone().addScaledVector(direction, desiredDistance)
+      );
+      camera.updateProjectionMatrix();
+    };
+
+    setScrollProgressRef.current = setScrollProgress;
+    setZoomProgressRef.current = setZoomProgress;
+
     const onScroll = () => {
       targetProgress = getSectionScrollProgress();
     };
@@ -856,9 +1103,9 @@ export default function ServerCaseBlueprint({
         hoverCurrent.set(name, current + (target - current) * 0.08);
       }
 
-      updateTelemetryOverlay();
-
       controls.update();
+      updateTelemetryOverlay();
+      updateHud();
       renderer.render(scene, camera);
       raf = requestAnimationFrame(loop);
     };
@@ -912,6 +1159,8 @@ export default function ServerCaseBlueprint({
         getAverageWorldPosition(MOTHERBOARD_PART_NAMES) ?? new Vector3(0, 0, 0);
 
       controls.target.copy(motherboardCenter);
+      controls.minDistance = dist * 0.55;
+      controls.maxDistance = dist * 1.2;
       camera.position.set(
         motherboardCenter.x + dist * 0.55,
         motherboardCenter.y + dist * 0.35,
@@ -1030,6 +1279,7 @@ export default function ServerCaseBlueprint({
       camera.aspect = container.clientWidth / container.clientHeight;
       camera.updateProjectionMatrix();
       updateTelemetryOverlay();
+      updateHud();
     };
 
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -1043,6 +1293,8 @@ export default function ServerCaseBlueprint({
 
     return () => {
       disposed = true;
+      setScrollProgressRef.current = () => {};
+      setZoomProgressRef.current = () => {};
       cancelAnimationFrame(raf);
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", resize);
@@ -1070,6 +1322,41 @@ export default function ServerCaseBlueprint({
         offsetX: event.clientX - panelRect.left,
         offsetY: event.clientY - panelRect.top,
       };
+
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+
+  const startHudDrag =
+    (control: "scroll" | "zoom") => (event: ReactPointerEvent<HTMLDivElement>) => {
+      hudDragStateRef.current = {
+        control,
+        pointerId: event.pointerId,
+      };
+
+      if (control === "scroll") {
+        const track = scrollTrackRef.current;
+        if (track) {
+          const rect = track.getBoundingClientRect();
+          const progress = clamp(
+            (event.clientX - rect.left) / Math.max(1, rect.width),
+            0,
+            1
+          );
+          setScrollProgressRef.current(progress);
+        }
+      } else {
+        const track = zoomTrackRef.current;
+        if (track) {
+          const rect = track.getBoundingClientRect();
+          const progress = clamp(
+            (rect.bottom - event.clientY) / Math.max(1, rect.height),
+            0,
+            1
+          );
+          setZoomProgressRef.current(progress);
+        }
+      }
 
       event.currentTarget.setPointerCapture(event.pointerId);
       event.preventDefault();
@@ -1109,9 +1396,72 @@ export default function ServerCaseBlueprint({
               />
             </svg>
 
+            <div className="pointer-events-none absolute bottom-6 left-6 z-20 flex items-end gap-4 text-[#3a2418]">
+              <div className="flex items-end gap-3">
+                <div className="flex flex-col items-center gap-2">
+                  <span className="text-[9px] uppercase tracking-[0.28em] text-[#6b4a36]">
+                    In
+                  </span>
+
+                  <div
+                    ref={zoomTrackRef}
+                    className="pointer-events-auto flex h-28 w-7 cursor-pointer items-end border border-[#4e3221] bg-[#efe1c3] p-[3px] shadow-[4px_4px_0_rgba(78,50,33,0.18)]"
+                    onPointerDown={startHudDrag("zoom")}
+                  >
+                    <div
+                      ref={zoomScaleFillRef}
+                      className="w-full bg-[#6b4a36] transition-[height] duration-150"
+                      style={{ height: "0%" }}
+                    />
+                  </div>
+
+                  <span className="text-[9px] uppercase tracking-[0.28em] text-[#6b4a36]">
+                    Out
+                  </span>
+                </div>
+
+                <div className="min-w-[44px] border border-[#4e3221] bg-[#f6ead1] px-2 py-1 text-center shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                  <div className="text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+                    Zoom
+                  </div>
+                  <span
+                    ref={zoomScaleLabelRef}
+                    className="mt-1 block font-mono text-xs text-[#3a2418]"
+                  >
+                    0%
+                  </span>
+                </div>
+              </div>
+
+              <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+                  <span>Scroll</span>
+                  <span ref={scrollProgressLabelRef} className="font-mono text-[#3a2418]">
+                    0%
+                  </span>
+                </div>
+
+                <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+                  <div
+                    ref={scrollTrackRef}
+                    className="pointer-events-auto h-full cursor-pointer"
+                    onPointerDown={startHudDrag("scroll")}
+                  >
+                    <div
+                      ref={scrollProgressFillRef}
+                      className="h-full bg-[#6b4a36] transition-[width] duration-150"
+                      style={{ width: "0%" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <TelemetryWindow
               data={cpuTelemetry}
               innerRef={cpuPanelRef}
+              shellRef={cpuShellRef}
+              contentRef={cpuContentRef}
               position={panelPositions.cpu}
               onDragStart={startPanelDrag("cpu")}
             />
@@ -1119,6 +1469,8 @@ export default function ServerCaseBlueprint({
             <TelemetryWindow
               data={ramTelemetry}
               innerRef={ramPanelRef}
+              shellRef={ramShellRef}
+              contentRef={ramContentRef}
               position={panelPositions.ram}
               onDragStart={startPanelDrag("ram")}
             />
