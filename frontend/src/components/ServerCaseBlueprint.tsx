@@ -590,10 +590,18 @@ export default function ServerCaseBlueprint({
   const scrollProgressFillRef = useRef<HTMLDivElement>(null);
   const scrollIndicatorRef = useRef<HTMLDivElement>(null);
   const scrollProgressLabelRef = useRef<HTMLSpanElement>(null);
+  const mobileScrollTrackRef = useRef<HTMLDivElement>(null);
+  const mobileScrollProgressFillRef = useRef<HTMLDivElement>(null);
+  const mobileScrollIndicatorRef = useRef<HTMLDivElement>(null);
+  const mobileScrollProgressLabelRef = useRef<HTMLSpanElement>(null);
   const zoomTrackRef = useRef<HTMLDivElement>(null);
   const zoomScaleFillRef = useRef<HTMLDivElement>(null);
   const zoomIndicatorRef = useRef<HTMLDivElement>(null);
   const zoomScaleLabelRef = useRef<HTMLSpanElement>(null);
+  const mobileZoomTrackRef = useRef<HTMLDivElement>(null);
+  const mobileZoomScaleFillRef = useRef<HTMLDivElement>(null);
+  const mobileZoomIndicatorRef = useRef<HTMLDivElement>(null);
+  const mobileZoomScaleLabelRef = useRef<HTMLSpanElement>(null);
   const currentProgressRef = useRef(0);
   const animationProgressRef = useRef(0);
   const setScrollProgressRef = useRef<(progress: number) => void>(() => {});
@@ -607,6 +615,9 @@ export default function ServerCaseBlueprint({
   const hudDragStateRef = useRef<{
     control: "scroll" | "zoom";
     pointerId: number;
+    axis: "x" | "y";
+    invert: boolean;
+    track: HTMLDivElement | null;
   } | null>(null);
   const didInitPanelPositionsRef = useRef(false);
 
@@ -767,23 +778,21 @@ export default function ServerCaseBlueprint({
     const updateHudDrag = (event: PointerEvent) => {
       const dragState = hudDragStateRef.current;
       if (!dragState) return;
-
-      if (dragState.control === "scroll") {
-        const track = scrollTrackRef.current;
-        if (!track) return;
-
-        const rect = track.getBoundingClientRect();
-        const progress = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-        setScrollProgressRef.current(progress);
-        return;
-      }
-
-      const track = zoomTrackRef.current;
+      const track = dragState.track;
       if (!track) return;
 
       const rect = track.getBoundingClientRect();
-      const progress = clamp((rect.bottom - event.clientY) / Math.max(1, rect.height), 0, 1);
-      setZoomProgressRef.current(progress);
+      const rawProgress =
+        dragState.axis === "x"
+          ? (event.clientX - rect.left) / Math.max(1, rect.width)
+          : (event.clientY - rect.top) / Math.max(1, rect.height);
+      const progress = clamp(dragState.invert ? 1 - rawProgress : rawProgress, 0, 1);
+
+      if (dragState.control === "scroll") {
+        setScrollProgressRef.current(progress);
+      } else {
+        setZoomProgressRef.current(progress);
+      }
     };
 
     const stopHudDrag = (event: PointerEvent) => {
@@ -986,9 +995,15 @@ export default function ServerCaseBlueprint({
       const scrollFill = scrollProgressFillRef.current;
       const scrollIndicator = scrollIndicatorRef.current;
       const scrollLabel = scrollProgressLabelRef.current;
+      const mobileScrollFill = mobileScrollProgressFillRef.current;
+      const mobileScrollIndicator = mobileScrollIndicatorRef.current;
+      const mobileScrollLabel = mobileScrollProgressLabelRef.current;
       const zoomFill = zoomScaleFillRef.current;
       const zoomIndicator = zoomIndicatorRef.current;
       const zoomLabel = zoomScaleLabelRef.current;
+      const mobileZoomFill = mobileZoomScaleFillRef.current;
+      const mobileZoomIndicator = mobileZoomIndicatorRef.current;
+      const mobileZoomLabel = mobileZoomScaleLabelRef.current;
 
       if (scrollFill) {
         scrollFill.style.width = `${currentProgressRef.current * 100}%`;
@@ -1000,6 +1015,18 @@ export default function ServerCaseBlueprint({
 
       if (scrollLabel) {
         scrollLabel.textContent = `${Math.round(currentProgressRef.current * 100)}%`;
+      }
+
+      if (mobileScrollFill) {
+        mobileScrollFill.style.height = `${currentProgressRef.current * 100}%`;
+      }
+
+      if (mobileScrollIndicator) {
+        mobileScrollIndicator.style.bottom = `${currentProgressRef.current * 100}%`;
+      }
+
+      if (mobileScrollLabel) {
+        mobileScrollLabel.textContent = `${Math.round(currentProgressRef.current * 100)}%`;
       }
 
       const zoomRange = Math.max(0.0001, controls.maxDistance - controls.minDistance);
@@ -1015,9 +1042,19 @@ export default function ServerCaseBlueprint({
       }
 
       if (zoomLabel) {
-        zoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`
-          .split("")
-          .join("\n");
+        zoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`;
+      }
+
+      if (mobileZoomFill) {
+        mobileZoomFill.style.height = `${zoomProgress * 100}%`;
+      }
+
+      if (mobileZoomIndicator) {
+        mobileZoomIndicator.style.bottom = `${zoomProgress * 100}%`;
+      }
+
+      if (mobileZoomLabel) {
+        mobileZoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`;
       }
     };
 
@@ -1476,32 +1513,33 @@ export default function ServerCaseBlueprint({
     };
 
   const startHudDrag =
-    (control: "scroll" | "zoom") => (event: ReactPointerEvent<HTMLDivElement>) => {
+    (
+      control: "scroll" | "zoom",
+      axis: "x" | "y",
+      invert: boolean,
+      trackRef: RefObject<HTMLDivElement>
+    ) =>
+    (event: ReactPointerEvent<HTMLDivElement>) => {
       hudDragStateRef.current = {
         control,
         pointerId: event.pointerId,
+        axis,
+        invert,
+        track: trackRef.current,
       };
 
-      if (control === "scroll") {
-        const track = scrollTrackRef.current;
-        if (track) {
-          const rect = track.getBoundingClientRect();
-          const progress = clamp(
-            (event.clientX - rect.left) / Math.max(1, rect.width),
-            0,
-            1
-          );
+      const track = trackRef.current;
+      if (track) {
+        const rect = track.getBoundingClientRect();
+        const rawProgress =
+          axis === "x"
+            ? (event.clientX - rect.left) / Math.max(1, rect.width)
+            : (event.clientY - rect.top) / Math.max(1, rect.height);
+        const progress = clamp(invert ? 1 - rawProgress : rawProgress, 0, 1);
+
+        if (control === "scroll") {
           setScrollProgressRef.current(progress);
-        }
-      } else {
-        const track = zoomTrackRef.current;
-        if (track) {
-          const rect = track.getBoundingClientRect();
-          const progress = clamp(
-            (rect.bottom - event.clientY) / Math.max(1, rect.height),
-            0,
-            1
-          );
+        } else {
           setZoomProgressRef.current(progress);
         }
       }
@@ -1619,14 +1657,10 @@ export default function ServerCaseBlueprint({
               />
             </svg>
 
-            <div
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-20"
-              style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
-            >
-              <div className="pointer-events-none mx-4 flex items-end gap-4 rounded-sm border border-[#4e3221] bg-[#f6ead1]/92 px-4 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)] backdrop-blur-[2px] md:mx-6 md:w-fit">
-                <div className="relative h-[220px] w-[52px]">
-                  <div className="pointer-events-none absolute left-1/2 top-1/2 w-[220px] -translate-x-1/2 -translate-y-1/2 rotate-90">
-                    <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+            <div className="pointer-events-none absolute bottom-6 left-6 z-20 hidden items-end gap-4 text-[#3a2418] md:flex">
+              <div className="relative h-[220px] w-[52px]">
+                <div className="pointer-events-none absolute left-1/2 top-1/2 w-[220px] -translate-x-1/2 -translate-y-1/2 rotate-90">
+                  <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
                     <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
                       <span
                         ref={zoomScaleLabelRef}
@@ -1641,7 +1675,7 @@ export default function ServerCaseBlueprint({
                       <div
                         ref={zoomTrackRef}
                         className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
-                        onPointerDown={startHudDrag("zoom")}
+                        onPointerDown={startHudDrag("zoom", "x", true, zoomTrackRef)}
                       >
                         <div
                           ref={zoomScaleFillRef}
@@ -1657,33 +1691,88 @@ export default function ServerCaseBlueprint({
                     </div>
                   </div>
                 </div>
+              </div>
+
+              <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+                  <span>Scroll</span>
+                  <span ref={scrollProgressLabelRef} className="font-mono text-[#3a2418]">
+                    0%
+                  </span>
                 </div>
 
-                <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                  <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
-                    <span>Scroll</span>
-                    <span ref={scrollProgressLabelRef} className="font-mono text-[#3a2418]">
-                      0%
-                    </span>
-                  </div>
-
-                  <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+                <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+                  <div
+                    ref={scrollTrackRef}
+                    className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
+                    onPointerDown={startHudDrag("scroll", "x", false, scrollTrackRef)}
+                  >
                     <div
-                      ref={scrollTrackRef}
-                      className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
-                      onPointerDown={startHudDrag("scroll")}
-                    >
-                      <div
-                        ref={scrollProgressFillRef}
-                        className="h-full bg-[#6b4a36] transition-[width] duration-150"
-                        style={{ width: "0%" }}
-                      />
-                      <div
-                        ref={scrollIndicatorRef}
-                        className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
-                        style={{ left: "0%" }}
-                      />
-                    </div>
+                      ref={scrollProgressFillRef}
+                      className="h-full bg-[#6b4a36] transition-[width] duration-150"
+                      style={{ width: "0%" }}
+                    />
+                    <div
+                      ref={scrollIndicatorRef}
+                      className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                      style={{ left: "0%" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-20 flex items-center justify-between px-4 md:hidden">
+              <div className="border border-[#4e3221] bg-[#f6ead1] px-2 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36] [writing-mode:vertical-rl]">
+                  <span ref={mobileZoomScaleLabelRef} className="font-mono text-[#3a2418]">
+                    0%
+                  </span>
+                  <span>Zoom</span>
+                </div>
+                <div className="flex h-40 w-4 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+                  <div
+                    ref={mobileZoomTrackRef}
+                    className="pointer-events-auto relative h-full w-full cursor-pointer overflow-visible"
+                    onPointerDown={startHudDrag("zoom", "y", true, mobileZoomTrackRef)}
+                  >
+                    <div
+                      ref={mobileZoomScaleFillRef}
+                      className="absolute bottom-0 left-0 w-full bg-[#6b4a36] transition-[height] duration-150"
+                      style={{ height: "0%" }}
+                    />
+                    <div
+                      ref={mobileZoomIndicatorRef}
+                      className="absolute left-1/2 h-[3px] w-[calc(100%+12px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
+                      style={{ bottom: "0%" }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-[#4e3221] bg-[#f6ead1] px-2 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36] [writing-mode:vertical-rl]">
+                  <span>Scroll</span>
+                  <span ref={mobileScrollProgressLabelRef} className="font-mono text-[#3a2418]">
+                    0%
+                  </span>
+                </div>
+                <div className="flex h-40 w-4 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+                  <div
+                    ref={mobileScrollTrackRef}
+                    className="pointer-events-auto relative h-full w-full cursor-pointer overflow-visible"
+                    onPointerDown={startHudDrag("scroll", "y", true, mobileScrollTrackRef)}
+                  >
+                    <div
+                      ref={mobileScrollProgressFillRef}
+                      className="absolute bottom-0 left-0 w-full bg-[#6b4a36] transition-[height] duration-150"
+                      style={{ height: "0%" }}
+                    />
+                    <div
+                      ref={mobileScrollIndicatorRef}
+                      className="absolute left-1/2 h-[3px] w-[calc(100%+12px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
+                      style={{ bottom: "0%" }}
+                    />
                   </div>
                 </div>
               </div>
