@@ -189,6 +189,18 @@ function formatLastRefresh(iso: string | null | undefined): string {
   });
 }
 
+function formatCpuTitle(model: string | null | undefined): string {
+  if (!model || !model.trim()) return "CPU";
+
+  const cleaned = model
+    .replace(/\(R\)/g, "")
+    .replace(/\(TM\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return `CPU • ${cleaned}`;
+}
+
 type PanelData = {
   title: string;
   primaryLabel: string;
@@ -200,7 +212,7 @@ type PanelData = {
 
 function extractCpuTelemetry(metrics: MetricsResponse | null): PanelData {
   return {
-    title: "CPU",
+    title: formatCpuTitle(metrics?.cpu?.model ?? null),
     primaryLabel: "Uptime",
     primaryValue: formatUptime(metrics?.uptime_seconds ?? null),
     secondaryLabel: "Last Refresh",
@@ -248,9 +260,8 @@ function TelemetryWindow({
       ].join(" ")}
     >
       <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2">
-        <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
+        <div className="flex items-center justify-start text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
           <span>{data.title}</span>
-          <span>Live</span>
         </div>
       </div>
 

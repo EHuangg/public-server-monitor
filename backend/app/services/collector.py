@@ -135,7 +135,7 @@ def _fallback_cpu_model() -> str | None:
         except Exception:
             pass
 
-    cpuinfo = _read_file("/proc/cpuinfo")
+    cpuinfo = _read_file("/host_proc/cpuinfo") or _read_file("/proc/cpuinfo")
     if cpuinfo:
         for line in cpuinfo.splitlines():
             if line.lower().startswith("model name"):
@@ -147,7 +147,10 @@ def _fallback_cpu_model() -> str | None:
 
 
 def _fallback_cpu_frequency_mhz() -> float | None:
-    current_freq = _read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+    current_freq = (
+        _read_file("/host_sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+        or _read_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+    )
     if current_freq:
         try:
             return round(float(current_freq) / 1000.0, 2)
@@ -164,7 +167,7 @@ def _fallback_cpu_frequency_mhz() -> float | None:
                     if parsed is not None:
                         return round(parsed, 2)
 
-    cpuinfo = _read_file("/proc/cpuinfo")
+    cpuinfo = _read_file("/host_proc/cpuinfo") or _read_file("/proc/cpuinfo")
     if cpuinfo:
         for line in cpuinfo.splitlines():
             if line.lower().startswith("cpu mhz"):
@@ -220,13 +223,15 @@ def _fallback_nvidia_gpu() -> GpuMetric | None:
 
 
 def _fallback_amd_gpu() -> GpuMetric | None:
-    busy = _read_file("/sys/class/drm/card0/device/gpu_busy_percent")
-    vram_used = _read_file("/sys/class/drm/card0/device/mem_info_vram_used")
-    vram_total = _read_file("/sys/class/drm/card0/device/mem_info_vram_total")
-    product_name = _read_file("/sys/class/drm/card0/device/product_name")
+    busy = _read_file("/host_sys/class/drm/card0/device/gpu_busy_percent")
+    vram_used = _read_file("/host_sys/class/drm/card0/device/mem_info_vram_used")
+    vram_total = _read_file("/host_sys/class/drm/card0/device/mem_info_vram_total")
+    product_name = _read_file("/host_sys/class/drm/card0/device/product_name")
 
     temperature_c = None
     for path in [
+        "/host_sys/class/drm/card0/device/hwmon/hwmon0/temp1_input",
+        "/host_sys/class/hwmon/hwmon0/temp1_input",
         "/sys/class/drm/card0/device/hwmon/hwmon0/temp1_input",
         "/sys/class/hwmon/hwmon0/temp1_input",
     ]:
@@ -247,7 +252,7 @@ def _fallback_amd_gpu() -> GpuMetric | None:
         model=_sanitize_text(product_name) if product_name else "AMD GPU",
         temperature_c=temperature_c,
     )
-
+    
 
 def _extract_docker_containers(payload: dict) -> list[DockerContainerMetric]:
     docker_payload = payload.get("docker", None)
