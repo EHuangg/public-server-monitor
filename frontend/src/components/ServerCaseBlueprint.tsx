@@ -1,7 +1,7 @@
 "use client";
 
 import { createTimeline } from "animejs";
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import {
   Box3,
   Color,
@@ -78,6 +78,121 @@ const GROUP_5_END = GROUP_5_START + GROUP_DURATION;
 
 const GROUP_6_START = GROUP_5_START + GROUP_OFFSET;
 const GROUP_6_END = GROUP_6_START + GROUP_DURATION;
+
+const MIN_VISIBLE_SCALE = 0.0001;
+const PANEL_WIDTH = 240;
+const PANEL_MARGIN = 24;
+const CONNECTOR_GAP = 20;
+
+type PanelKey = "cpu" | "ram";
+type Point = { x: number; y: number };
+type PanelPosition = { x: number; y: number };
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getPanelConnectionPoint(
+  rect: DOMRect,
+  overlayRect: DOMRect,
+  anchor: Point
+): { port: Point; outside: Point }[] {
+  const left = rect.left - overlayRect.left;
+  const right = rect.right - overlayRect.left;
+  const top = rect.top - overlayRect.top;
+  const bottom = rect.bottom - overlayRect.top;
+
+  return [
+    {
+      port: { x: left, y: clamp(anchor.y, top + 16, bottom - 16) },
+      outside: { x: left - CONNECTOR_GAP, y: clamp(anchor.y, top + 16, bottom - 16) },
+    },
+    {
+      port: { x: right, y: clamp(anchor.y, top + 16, bottom - 16) },
+      outside: { x: right + CONNECTOR_GAP, y: clamp(anchor.y, top + 16, bottom - 16) },
+    },
+    {
+      port: { x: clamp(anchor.x, left + 16, right - 16), y: top },
+      outside: { x: clamp(anchor.x, left + 16, right - 16), y: top - CONNECTOR_GAP },
+    },
+    {
+      port: { x: clamp(anchor.x, left + 16, right - 16), y: bottom },
+      outside: { x: clamp(anchor.x, left + 16, right - 16), y: bottom + CONNECTOR_GAP },
+    },
+  ];
+}
+
+function normalizePath(points: Point[]): Point[] {
+  const cleaned: Point[] = [];
+
+  for (const point of points) {
+    const prev = cleaned[cleaned.length - 1];
+    if (prev && prev.x === point.x && prev.y === point.y) continue;
+    cleaned.push(point);
+  }
+
+  const flattened: Point[] = [];
+
+  for (const point of cleaned) {
+    const prev = flattened[flattened.length - 1];
+    const prevPrev = flattened[flattened.length - 2];
+
+    if (
+      prev &&
+      prevPrev &&
+      ((prevPrev.x === prev.x && prev.x === point.x) ||
+        (prevPrev.y === prev.y && prev.y === point.y))
+    ) {
+      flattened[flattened.length - 1] = point;
+      continue;
+    }
+
+    flattened.push(point);
+  }
+
+  return flattened;
+}
+
+function getPathLength(points: Point[]): number {
+  let length = 0;
+
+  for (let i = 1; i < points.length; i += 1) {
+    length += Math.abs(points[i].x - points[i - 1].x);
+    length += Math.abs(points[i].y - points[i - 1].y);
+  }
+
+  return length;
+}
+
+function buildOrthogonalPath(anchor: Point, panelRect: DOMRect, overlayRect: DOMRect): string {
+  const candidates = getPanelConnectionPoint(panelRect, overlayRect, anchor).flatMap(
+    ({ port, outside }) => {
+      const horizontalFirst = normalizePath([
+        anchor,
+        { x: outside.x, y: anchor.y },
+        outside,
+        port,
+      ]);
+
+      const verticalFirst = normalizePath([
+        anchor,
+        { x: anchor.x, y: outside.y },
+        outside,
+        port,
+      ]);
+
+      return [horizontalFirst, verticalFirst];
+    }
+  );
+
+  const best = candidates.reduce((shortest, candidate) => {
+    if (!shortest) return candidate;
+    return getPathLength(candidate) < getPathLength(shortest) ? candidate : shortest;
+  }, null as Point[] | null);
+
+  if (!best) return "";
+  return best.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+}
 
 function applyBlueprintStyle(mesh: Mesh): void {
   const geom = mesh.geometry;
@@ -240,26 +355,29 @@ function extractRamTelemetry(metrics: MetricsResponse | null): PanelData {
 
 function TelemetryWindow({
   data,
-  align = "left",
   innerRef,
+  position,
+  onDragStart,
 }: {
   data: PanelData;
-  align?: "left" | "right";
   innerRef: RefObject<HTMLDivElement>;
+  position: PanelPosition;
+  onDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   return (
     <div
       ref={innerRef}
       className={[
-        "pointer-events-none absolute z-20 w-[240px] overflow-hidden border",
+        "pointer-events-auto absolute z-20 w-[240px] overflow-hidden border",
         "border-[#4e3221] bg-[#f6ead1] text-[#3a2418]",
         "shadow-[4px_4px_0_rgba(78,50,33,0.18)]",
-        align === "left"
-          ? "left-8 top-24 md:left-12 md:top-20"
-          : "right-8 top-24 md:right-12 md:top-20",
       ].join(" ")}
+      style={{ left: position.x, top: position.y }}
     >
-      <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2">
+      <div
+        className="cursor-grab border-b border-[#4e3221] bg-[#ead9b7] px-4 py-2 active:cursor-grabbing"
+        onPointerDown={onDragStart}
+      >
         <div className="flex items-center justify-start text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
           <span>{data.title}</span>
         </div>
@@ -324,9 +442,112 @@ export default function ServerCaseBlueprint({
   const ramPanelRef = useRef<HTMLDivElement>(null);
   const cpuPathRef = useRef<SVGPathElement>(null);
   const ramPathRef = useRef<SVGPathElement>(null);
+  const dragStateRef = useRef<{
+    panel: PanelKey;
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+  const didInitPanelPositionsRef = useRef(false);
 
   const cpuTelemetry = useMemo(() => extractCpuTelemetry(metrics), [metrics]);
   const ramTelemetry = useMemo(() => extractRamTelemetry(metrics), [metrics]);
+  const [panelPositions, setPanelPositions] = useState<Record<PanelKey, PanelPosition>>({
+    cpu: { x: PANEL_MARGIN, y: 96 },
+    ram: { x: PANEL_MARGIN, y: 96 },
+  });
+
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+
+    const syncPanelPositions = () => {
+      const overlayRect = overlay.getBoundingClientRect();
+
+      setPanelPositions((current) => {
+        const cpuHeight = cpuPanelRef.current?.getBoundingClientRect().height ?? 280;
+        const ramHeight = ramPanelRef.current?.getBoundingClientRect().height ?? 280;
+
+        const nextCpu = {
+          x: clamp(current.cpu.x, PANEL_MARGIN, Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)),
+          y: clamp(current.cpu.y, PANEL_MARGIN, Math.max(PANEL_MARGIN, overlayRect.height - cpuHeight - PANEL_MARGIN)),
+        };
+
+        const desiredRamX = overlayRect.width - PANEL_WIDTH - PANEL_MARGIN;
+        const nextRam = {
+          x: didInitPanelPositionsRef.current
+            ? clamp(
+                current.ram.x,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)
+              )
+            : Math.max(PANEL_MARGIN, desiredRamX),
+          y: clamp(current.ram.y, PANEL_MARGIN, Math.max(PANEL_MARGIN, overlayRect.height - ramHeight - PANEL_MARGIN)),
+        };
+
+        const nextCpuAdjusted = didInitPanelPositionsRef.current
+          ? nextCpu
+          : {
+              x: PANEL_MARGIN,
+              y: Math.max(PANEL_MARGIN, Math.min(96, overlayRect.height - cpuHeight - PANEL_MARGIN)),
+            };
+
+        didInitPanelPositionsRef.current = true;
+        return { cpu: nextCpuAdjusted, ram: nextRam };
+      });
+    };
+
+    syncPanelPositions();
+    window.addEventListener("resize", syncPanelPositions);
+
+    return () => {
+      window.removeEventListener("resize", syncPanelPositions);
+    };
+  }, []);
+
+  useEffect(() => {
+    const movePanel = (event: PointerEvent) => {
+      const dragState = dragStateRef.current;
+      const overlay = overlayRef.current;
+      if (!dragState || !overlay) return;
+
+      const overlayRect = overlay.getBoundingClientRect();
+      const panelRef = dragState.panel === "cpu" ? cpuPanelRef.current : ramPanelRef.current;
+      const panelHeight = panelRef?.getBoundingClientRect().height ?? 280;
+
+      const nextX = clamp(
+        event.clientX - overlayRect.left - dragState.offsetX,
+        PANEL_MARGIN,
+        Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)
+      );
+      const nextY = clamp(
+        event.clientY - overlayRect.top - dragState.offsetY,
+        PANEL_MARGIN,
+        Math.max(PANEL_MARGIN, overlayRect.height - panelHeight - PANEL_MARGIN)
+      );
+
+      setPanelPositions((current) => ({
+        ...current,
+        [dragState.panel]: { x: nextX, y: nextY },
+      }));
+    };
+
+    const stopDragging = (event: PointerEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+      dragStateRef.current = null;
+    };
+
+    window.addEventListener("pointermove", movePanel);
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+
+    return () => {
+      window.removeEventListener("pointermove", movePanel);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
+  }, []);
 
   useEffect(() => {
     const container = canvasMountRef.current;
@@ -367,6 +588,7 @@ export default function ServerCaseBlueprint({
 
     const partsMap = new Map<string, Object3D>();
     const hoverMap = new Map<string, Object3D>();
+    const dvdPartsMap = new Map<string, Object3D>();
     const originalScales = new Map<string, Vector3>();
 
     const baseWorld = new Map<string, Vector3>();
@@ -446,28 +668,13 @@ export default function ServerCaseBlueprint({
     const setConnectorPath = (
       path: SVGPathElement | null,
       panel: HTMLDivElement | null,
-      anchor: { x: number; y: number; visible: boolean } | null,
-      side: "left" | "right"
+      anchor: { x: number; y: number; visible: boolean } | null
     ) => {
       if (!path || !panel || !anchor) return;
 
       const overlayRect = overlay.getBoundingClientRect();
       const panelRect = panel.getBoundingClientRect();
-
-      const panelEdgeX =
-        side === "left"
-          ? panelRect.right - overlayRect.left
-          : panelRect.left - overlayRect.left;
-
-      const panelY = panelRect.top - overlayRect.top + panelRect.height * 0.5;
-      const elbowX = side === "left" ? anchor.x - 40 : anchor.x + 40;
-
-      const d = [
-        `M ${anchor.x} ${anchor.y}`,
-        `L ${elbowX} ${anchor.y}`,
-        `L ${elbowX} ${panelY}`,
-        `L ${panelEdgeX} ${panelY}`,
-      ].join(" ");
+      const d = buildOrthogonalPath(anchor, panelRect, overlayRect);
 
       path.setAttribute("d", d);
       path.style.opacity = anchor.visible ? "1" : "0";
@@ -495,8 +702,8 @@ export default function ServerCaseBlueprint({
           )
         : null;
 
-      setConnectorPath(cpuPathRef.current, cpuPanelRef.current, cpuAnchor, "left");
-      setConnectorPath(ramPathRef.current, ramPanelRef.current, ramAnchor, "right");
+      setConnectorPath(cpuPathRef.current, cpuPanelRef.current, cpuAnchor);
+      setConnectorPath(ramPathRef.current, ramPanelRef.current, ramAnchor);
     };
 
     const updateCasePositions = (progress: number) => {
@@ -505,8 +712,6 @@ export default function ServerCaseBlueprint({
       for (const [name, obj] of partsMap) {
         const bw = baseWorld.get(name);
         const wd = worldDir.get(name);
-        const origScale = originalScales.get(name) || new Vector3(1, 1, 1);
-
         if (!bw || !wd || !obj.parent) continue;
 
         const [start, end] = getWindowForPart(name);
@@ -514,24 +719,26 @@ export default function ServerCaseBlueprint({
 
         const targetWorld = bw.clone().addScaledVector(wd, phase * maxDistance);
 
-        const localPos = targetWorld.clone();
-        obj.parent.worldToLocal(localPos);
-        obj.position.copy(localPos);
+        const shrinkStart = end;
+        const shrinkEnd = Math.min(0.995, shrinkStart + 0.06);
+        const shrinkP = getPhaseProgress(progress, shrinkStart, shrinkEnd);
+        const shrinkScale = Math.max(1 - shrinkP, MIN_VISIBLE_SCALE);
+        const shouldHide = shrinkP >= 0.999;
 
-        obj.scale.copy(origScale);
-        obj.visible = true;
+        obj.scale.setScalar(shrinkScale);
+
+        const parentLocalPos = targetWorld.clone();
+        obj.parent.worldToLocal(parentLocalPos);
+        obj.position.copy(parentLocalPos);
+        obj.visible = !shouldHide;
       }
 
-      const dvdDrive = rootGroup.getObjectByName("FrontPanelDVDDrive");
-      const dvdTray = rootGroup.getObjectByName("FrontPanelDVD");
+      const dvdDrive = dvdPartsMap.get("FrontPanelDVDDrive");
+      const dvdTray = dvdPartsMap.get("FrontPanelDVD");
 
       if (dvdDrive && dvdTray) {
         const driveBase = dvdBaseLocal.get("FrontPanelDVDDrive");
         const trayBase = dvdBaseLocal.get("FrontPanelDVD");
-        const driveOrigScale =
-          originalScales.get("FrontPanelDVDDrive") || new Vector3(1, 1, 1);
-        const trayOrigScale =
-          originalScales.get("FrontPanelDVD") || new Vector3(1, 1, 1);
 
         if (driveBase && trayBase) {
           const preP = getPhaseProgress(progress, 0, DVD_PREROLL_END);
@@ -555,10 +762,18 @@ export default function ServerCaseBlueprint({
 
           dvdDrive.position.copy(getDvdPos(driveBase, false));
           dvdTray.position.copy(getDvdPos(trayBase, true));
-          dvdDrive.scale.copy(driveOrigScale);
-          dvdTray.scale.copy(trayOrigScale);
-          dvdDrive.visible = true;
-          dvdTray.visible = true;
+
+          const dvdShrinkStart = GROUP_1_END;
+          const dvdShrinkEnd = Math.min(0.995, dvdShrinkStart + 0.06);
+          const dvdShrinkP = getPhaseProgress(progress, dvdShrinkStart, dvdShrinkEnd);
+          const dvdShrinkScale = Math.max(1 - dvdShrinkP, MIN_VISIBLE_SCALE);
+          const shouldHideDvd = dvdShrinkP >= 0.999;
+
+          dvdDrive.scale.setScalar(dvdShrinkScale);
+          dvdTray.scale.setScalar(dvdShrinkScale);
+
+          dvdDrive.visible = !shouldHideDvd;
+          dvdTray.visible = !shouldHideDvd;
         }
       }
 
@@ -689,7 +904,8 @@ export default function ServerCaseBlueprint({
         }
 
         if (n === "FrontPanelDVDDrive" || n === "FrontPanelDVD") {
-          dvdBaseLocal.set(n, child.position.clone());
+          partsMap.delete(n);
+          dvdPartsMap.set(n, child);
           return;
         }
 
@@ -702,6 +918,44 @@ export default function ServerCaseBlueprint({
           partsMap.set(n, child);
         }
       });
+
+      rootGroup.updateMatrixWorld(true);
+
+      for (const [name, obj] of [...partsMap]) {
+        if (!obj.parent) continue;
+
+        const parent = obj.parent;
+        const centerWorld = new Box3().setFromObject(obj).getCenter(new Vector3());
+        const centerParentLocal = parent.worldToLocal(centerWorld.clone());
+        const pivot = new Group();
+
+        pivot.name = `${name}__explodePivot`;
+        pivot.position.copy(centerParentLocal);
+
+        parent.add(pivot);
+        pivot.updateMatrixWorld(true);
+        pivot.attach(obj);
+        partsMap.set(name, pivot);
+      }
+
+      for (const [name, obj] of [...dvdPartsMap]) {
+        if (!obj.parent) continue;
+
+        const parent = obj.parent;
+        const centerWorld = new Box3().setFromObject(obj).getCenter(new Vector3());
+        const centerParentLocal = parent.worldToLocal(centerWorld.clone());
+        const pivot = new Group();
+
+        pivot.name = `${name}__dvdPivot`;
+        pivot.position.copy(centerParentLocal);
+
+        parent.add(pivot);
+        pivot.updateMatrixWorld(true);
+        pivot.attach(obj);
+
+        dvdPartsMap.set(name, pivot);
+        dvdBaseLocal.set(name, pivot.position.clone());
+      }
 
       rootGroup.updateMatrixWorld(true);
 
@@ -763,6 +1017,24 @@ export default function ServerCaseBlueprint({
     };
   }, []);
 
+  const startPanelDrag =
+    (panel: PanelKey) => (event: ReactPointerEvent<HTMLDivElement>) => {
+      const overlay = overlayRef.current;
+      const panelElement = panel === "cpu" ? cpuPanelRef.current : ramPanelRef.current;
+      if (!overlay || !panelElement) return;
+
+      const panelRect = panelElement.getBoundingClientRect();
+      dragStateRef.current = {
+        panel,
+        pointerId: event.pointerId,
+        offsetX: event.clientX - panelRect.left,
+        offsetY: event.clientY - panelRect.top,
+      };
+
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    };
+
   return (
     <section ref={sectionRef} className="relative w-full min-h-[270vh]">
       <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden">
@@ -778,9 +1050,9 @@ export default function ServerCaseBlueprint({
 
           <div
             ref={overlayRef}
-            className="pointer-events-none absolute inset-0 z-10"
+            className="absolute inset-0 z-10"
           >
-            <svg className="absolute inset-0 h-full w-full overflow-visible">
+            <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
               <path
                 ref={cpuPathRef}
                 fill="none"
@@ -799,14 +1071,16 @@ export default function ServerCaseBlueprint({
 
             <TelemetryWindow
               data={cpuTelemetry}
-              align="left"
               innerRef={cpuPanelRef}
+              position={panelPositions.cpu}
+              onDragStart={startPanelDrag("cpu")}
             />
 
             <TelemetryWindow
               data={ramTelemetry}
-              align="right"
               innerRef={ramPanelRef}
+              position={panelPositions.ram}
+              onDragStart={startPanelDrag("ram")}
             />
           </div>
         </div>
