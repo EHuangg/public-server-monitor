@@ -570,6 +570,7 @@ export default function ServerCaseBlueprint({
     x: 0,
     y: 0,
   });
+  const bannerPreviewTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -617,6 +618,31 @@ export default function ServerCaseBlueprint({
     ram: { x: PANEL_MARGIN, y: 96 },
     gpu: { x: PANEL_MARGIN, y: 96 },
   });
+
+  useEffect(() => {
+    return () => {
+      if (bannerPreviewTimeoutRef.current) {
+        clearTimeout(bannerPreviewTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section || !window.matchMedia("(pointer: coarse)").matches) return;
+
+    const preventTouchScroll = (event: TouchEvent) => {
+      event.preventDefault();
+    };
+
+    section.style.touchAction = "none";
+    section.addEventListener("touchmove", preventTouchScroll, { passive: false });
+
+    return () => {
+      section.style.touchAction = "";
+      section.removeEventListener("touchmove", preventTouchScroll);
+    };
+  }, []);
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -1508,6 +1534,25 @@ export default function ServerCaseBlueprint({
     setBannerPreview((current) => ({ ...current, visible: false }));
   };
 
+  const tapBannerPreview = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (!window.matchMedia("(pointer: coarse)").matches) return;
+
+    if (bannerPreviewTimeoutRef.current) {
+      clearTimeout(bannerPreviewTimeoutRef.current);
+    }
+
+    setBannerPreview({
+      visible: true,
+      x: event.clientX + 18,
+      y: event.clientY - 120,
+    });
+
+    bannerPreviewTimeoutRef.current = setTimeout(() => {
+      setBannerPreview((current) => ({ ...current, visible: false }));
+      bannerPreviewTimeoutRef.current = null;
+    }, 1400);
+  };
+
   return (
     <section ref={sectionRef} className="relative w-full min-h-[270vh]">
       <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden">
@@ -1521,6 +1566,7 @@ export default function ServerCaseBlueprint({
             onPointerEnter={showBannerPreview}
             onPointerMove={moveBannerPreview}
             onPointerLeave={hideBannerPreview}
+            onPointerDown={tapBannerPreview}
           >
             pls dont hack me pls I need this
           </span>
@@ -1573,7 +1619,10 @@ export default function ServerCaseBlueprint({
               />
             </svg>
 
-            <div className="pointer-events-none absolute bottom-6 left-6 z-20 flex items-end gap-4 text-[#3a2418]">
+            <div
+              className="pointer-events-none absolute left-6 z-20 flex items-end gap-4 text-[#3a2418]"
+              style={{ bottom: "calc(1.5rem + env(safe-area-inset-bottom))" }}
+            >
               <div className="relative h-[220px] w-[52px]">
                 <div className="pointer-events-none absolute left-1/2 top-1/2 w-[220px] -translate-x-1/2 -translate-y-1/2 rotate-90">
                   <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
