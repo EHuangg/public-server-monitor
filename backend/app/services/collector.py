@@ -293,8 +293,12 @@ def _extract_cpu_temperatures() -> list[TemperatureMetric]:
 
 def _extract_disks(payload: dict) -> list[DiskMetric]:
     disks: list[DiskMetric] = []
+    try:
+        disks = _extract_disks(payload)
+    except Exception:
+        disks = []
 
-    fs_payload = payload.get("fs") or payload.get("diskio") or payload.get("disks")
+    fs_payload = payload.get("fs")
     candidates: list[dict] = []
 
     if isinstance(fs_payload, list):
@@ -304,35 +308,27 @@ def _extract_disks(payload: dict) -> list[DiskMetric]:
         mountpoint = str(
             _first_present(item, ["mnt_point", "mount_point", "mount", "path"]) or ""
         ).strip()
-        device = str(_first_present(item, ["device_name", "device", "disk_name"]) or "").strip()
 
-        total_raw = _first_present(item, ["size", "total", "total_bytes"])
-        used_raw = _first_present(item, ["used", "used_bytes"])
-        free_raw = _first_present(item, ["free", "free_bytes"])
-        percent_raw = _first_present(item, ["percent", "used_percent"])
+        if not mountpoint:
+            continue
 
         if mountpoint.startswith(("/proc", "/sys", "/dev", "/run", "/snap", "/tmp")):
             continue
-
         if mountpoint in {"/boot", "/boot/efi"}:
             continue
 
-        total_gb = _bytes_to_gb(total_raw)
-        used_gb = _bytes_to_gb(used_raw)
-        free_gb = _bytes_to_gb(free_raw)
-        percent = _clamp_percent(percent_raw)
+        total_gb = _bytes_to_gb(_first_present(item, ["size", "total", "total_bytes"]))
+        used_gb = _bytes_to_gb(_first_present(item, ["used", "used_bytes"]))
+        free_gb = _bytes_to_gb(_first_present(item, ["free", "free_bytes"]))
+        percent_raw = _first_present(item, ["percent", "used_percent"])
+
+        percent = _clamp_percent(percent_raw) if percent_raw is not None else 0.0
 
         if total_gb is None or total_gb <= 1:
             continue
 
-        if mountpoint == "/":
-            label = "System Disk"
-        elif "/mnt" in mountpoint or "/media" in mountpoint:
-            label = "Data Disk"
-        else:
-            label = "Storage"
+        label = "System Disk" if mountpoint == "/" else "Data Disk"
 
-        # Differentiate duplicates without exposing the real path/device
         existing_labels = {d.label for d in disks}
         if label in existing_labels:
             suffix = len([d for d in disks if d.label.startswith(label)]) + 1
