@@ -24,6 +24,13 @@ class MemoryMetric(BaseModel):
     available_gb: float | None = None
     model: str | None = None
 
+class DiskMetric(BaseModel):
+    label: str
+    total_gb: float
+    used_gb: float
+    free_gb: float
+    percent: float
+
 
 class GpuMetric(BaseModel):
     percent: float | None = None
@@ -61,6 +68,7 @@ class MetricsResponse(BaseModel):
     mem: MemoryMetric
     gpu: GpuMetric | None = None
     fans: list[FanMetric]
+    disks: list[DiskMetric]
     uptime_seconds: int
     docker: list[DockerContainerMetric]
     minecraft: MinecraftMetric | None = None
