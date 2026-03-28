@@ -93,7 +93,7 @@ const PANEL_MARGIN = 24;
 const CONNECTOR_GAP = 20;
 const PANEL_REVEAL_DURATION = 0.1;
 
-type PanelKey = "cpu" | "ram";
+type PanelKey = "cpu" | "ram" | "gpu";
 type Point = { x: number; y: number };
 type PanelPosition = { x: number; y: number };
 type ScreenAnchor = { x: number; y: number; visible: boolean };
@@ -106,6 +106,7 @@ type PanelConfig = {
 const PANEL_CONFIGS: PanelConfig[] = [
   { key: "cpu", partNames: CPU_PART_NAMES, revealStart: GROUP_2_START },
   { key: "ram", partNames: RAM_PART_NAMES, revealStart: GROUP_2_START },
+  { key: "gpu", partNames: GPU_PART_NAMES, revealStart: GROUP_2_START },
 ];
 
 function clamp(value: number, min: number, max: number): number {
@@ -408,6 +409,16 @@ function formatCpuTitle(model: string | null | undefined): string {
   return `CPU • ${cleaned}`;
 }
 
+function formatGpuTitle(model: string | null | undefined): string {
+  if (!model || !model.trim()) return "GPU";
+  return `GPU • ${model.trim()}`;
+}
+
+function formatTemperature(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `${value.toFixed(0)} C`;
+}
+
 type PanelData = {
   title: string;
   primaryLabel: string;
@@ -442,6 +453,20 @@ function extractRamTelemetry(metrics: MetricsResponse | null): PanelData {
         ? `${metrics.mem.available_gb.toFixed(1)} GB`
         : "—",
     percent: clampPercent(metrics?.mem?.percent ?? null),
+  };
+}
+
+function extractGpuTelemetry(metrics: MetricsResponse | null): PanelData {
+  return {
+    title: formatGpuTitle(metrics?.gpu?.model ?? null),
+    primaryLabel: "Temperature",
+    primaryValue: formatTemperature(metrics?.gpu?.temperature_c ?? null),
+    secondaryLabel: "Memory",
+    secondaryValue: formatGigabytes(
+      metrics?.gpu?.used_gb ?? null,
+      metrics?.gpu?.total_gb ?? null
+    ),
+    percent: clampPercent(metrics?.gpu?.percent ?? null),
   };
 }
 
@@ -540,22 +565,33 @@ export default function ServerCaseBlueprint({
 }: {
   metrics: MetricsResponse | null;
 }) {
+  const [bannerPreview, setBannerPreview] = useState({
+    visible: false,
+    x: 0,
+    y: 0,
+  });
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const cpuPanelRef = useRef<HTMLDivElement>(null);
   const ramPanelRef = useRef<HTMLDivElement>(null);
+  const gpuPanelRef = useRef<HTMLDivElement>(null);
   const cpuShellRef = useRef<HTMLDivElement>(null);
   const ramShellRef = useRef<HTMLDivElement>(null);
+  const gpuShellRef = useRef<HTMLDivElement>(null);
   const cpuContentRef = useRef<HTMLDivElement>(null);
   const ramContentRef = useRef<HTMLDivElement>(null);
+  const gpuContentRef = useRef<HTMLDivElement>(null);
   const cpuPathRef = useRef<SVGPathElement>(null);
   const ramPathRef = useRef<SVGPathElement>(null);
+  const gpuPathRef = useRef<SVGPathElement>(null);
   const scrollTrackRef = useRef<HTMLDivElement>(null);
   const scrollProgressFillRef = useRef<HTMLDivElement>(null);
+  const scrollIndicatorRef = useRef<HTMLDivElement>(null);
   const scrollProgressLabelRef = useRef<HTMLSpanElement>(null);
   const zoomTrackRef = useRef<HTMLDivElement>(null);
   const zoomScaleFillRef = useRef<HTMLDivElement>(null);
+  const zoomIndicatorRef = useRef<HTMLDivElement>(null);
   const zoomScaleLabelRef = useRef<HTMLSpanElement>(null);
   const currentProgressRef = useRef(0);
   const animationProgressRef = useRef(0);
@@ -575,9 +611,11 @@ export default function ServerCaseBlueprint({
 
   const cpuTelemetry = useMemo(() => extractCpuTelemetry(metrics), [metrics]);
   const ramTelemetry = useMemo(() => extractRamTelemetry(metrics), [metrics]);
+  const gpuTelemetry = useMemo(() => extractGpuTelemetry(metrics), [metrics]);
   const [panelPositions, setPanelPositions] = useState<Record<PanelKey, PanelPosition>>({
     cpu: { x: PANEL_MARGIN, y: 96 },
     ram: { x: PANEL_MARGIN, y: 96 },
+    gpu: { x: PANEL_MARGIN, y: 96 },
   });
 
   useEffect(() => {
@@ -590,6 +628,7 @@ export default function ServerCaseBlueprint({
       setPanelPositions((current) => {
         const cpuHeight = cpuPanelRef.current?.getBoundingClientRect().height ?? 280;
         const ramHeight = ramPanelRef.current?.getBoundingClientRect().height ?? 280;
+        const gpuHeight = gpuPanelRef.current?.getBoundingClientRect().height ?? 280;
 
         const nextCpu = {
           x: clamp(current.cpu.x, PANEL_MARGIN, Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)),
@@ -608,6 +647,27 @@ export default function ServerCaseBlueprint({
           y: clamp(current.ram.y, PANEL_MARGIN, Math.max(PANEL_MARGIN, overlayRect.height - ramHeight - PANEL_MARGIN)),
         };
 
+        const desiredGpuY = Math.max(
+          PANEL_MARGIN,
+          overlayRect.height - gpuHeight - PANEL_MARGIN
+        );
+        const nextGpu = {
+          x: didInitPanelPositionsRef.current
+            ? clamp(
+                current.gpu.x,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)
+              )
+            : Math.max(PANEL_MARGIN, desiredRamX),
+          y: didInitPanelPositionsRef.current
+            ? clamp(
+                current.gpu.y,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.height - gpuHeight - PANEL_MARGIN)
+              )
+            : desiredGpuY,
+        };
+
         const nextCpuAdjusted = didInitPanelPositionsRef.current
           ? nextCpu
           : {
@@ -616,7 +676,7 @@ export default function ServerCaseBlueprint({
             };
 
         didInitPanelPositionsRef.current = true;
-        return { cpu: nextCpuAdjusted, ram: nextRam };
+        return { cpu: nextCpuAdjusted, ram: nextRam, gpu: nextGpu };
       });
     };
 
@@ -635,7 +695,12 @@ export default function ServerCaseBlueprint({
       if (!dragState || !overlay) return;
 
       const overlayRect = overlay.getBoundingClientRect();
-      const panelRef = dragState.panel === "cpu" ? cpuPanelRef.current : ramPanelRef.current;
+      const panelRef =
+        dragState.panel === "cpu"
+          ? cpuPanelRef.current
+          : dragState.panel === "ram"
+            ? ramPanelRef.current
+            : gpuPanelRef.current;
       const panelHeight = panelRef?.getBoundingClientRect().height ?? 280;
 
       const nextX = clamp(
@@ -893,12 +958,18 @@ export default function ServerCaseBlueprint({
 
     const updateHud = () => {
       const scrollFill = scrollProgressFillRef.current;
+      const scrollIndicator = scrollIndicatorRef.current;
       const scrollLabel = scrollProgressLabelRef.current;
       const zoomFill = zoomScaleFillRef.current;
+      const zoomIndicator = zoomIndicatorRef.current;
       const zoomLabel = zoomScaleLabelRef.current;
 
       if (scrollFill) {
         scrollFill.style.width = `${currentProgressRef.current * 100}%`;
+      }
+
+      if (scrollIndicator) {
+        scrollIndicator.style.left = `${currentProgressRef.current * 100}%`;
       }
 
       if (scrollLabel) {
@@ -913,6 +984,10 @@ export default function ServerCaseBlueprint({
         zoomFill.style.height = `${zoomProgress * 100}%`;
       }
 
+      if (zoomIndicator) {
+        zoomIndicator.style.bottom = `${zoomProgress * 100}%`;
+      }
+
       if (zoomLabel) {
         zoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`;
       }
@@ -922,18 +997,22 @@ export default function ServerCaseBlueprint({
       const panelRefs: Record<PanelKey, HTMLDivElement | null> = {
         cpu: cpuPanelRef.current,
         ram: ramPanelRef.current,
+        gpu: gpuPanelRef.current,
       };
       const shellRefs: Record<PanelKey, HTMLDivElement | null> = {
         cpu: cpuShellRef.current,
         ram: ramShellRef.current,
+        gpu: gpuShellRef.current,
       };
       const contentRefs: Record<PanelKey, HTMLDivElement | null> = {
         cpu: cpuContentRef.current,
         ram: ramContentRef.current,
+        gpu: gpuContentRef.current,
       };
       const pathRefs: Record<PanelKey, SVGPathElement | null> = {
         cpu: cpuPathRef.current,
         ram: ramPathRef.current,
+        gpu: gpuPathRef.current,
       };
 
       for (const panelConfig of PANEL_CONFIGS) {
@@ -1348,7 +1427,12 @@ export default function ServerCaseBlueprint({
   const startPanelDrag =
     (panel: PanelKey) => (event: ReactPointerEvent<HTMLDivElement>) => {
       const overlay = overlayRef.current;
-      const panelElement = panel === "cpu" ? cpuPanelRef.current : ramPanelRef.current;
+      const panelElement =
+        panel === "cpu"
+          ? cpuPanelRef.current
+          : panel === "ram"
+            ? ramPanelRef.current
+            : gpuPanelRef.current;
       if (!overlay || !panelElement) return;
 
       const panelRect = panelElement.getBoundingClientRect();
@@ -1398,14 +1482,62 @@ export default function ServerCaseBlueprint({
       event.preventDefault();
     };
 
+  const showBannerPreview = (event: ReactPointerEvent<HTMLDivElement>) => {
+    setBannerPreview({
+      visible: true,
+      x: event.clientX + 18,
+      y: event.clientY + 18,
+    });
+  };
+
+  const moveBannerPreview = (event: ReactPointerEvent<HTMLDivElement>) => {
+    setBannerPreview((current) =>
+      current.visible
+        ? {
+            visible: true,
+            x: event.clientX + 18,
+            y: event.clientY + 18,
+          }
+        : current
+    );
+  };
+
+  const hideBannerPreview = () => {
+    setBannerPreview((current) => ({ ...current, visible: false }));
+  };
+
   return (
     <section ref={sectionRef} className="relative w-full min-h-[270vh]">
       <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden">
-        <div className="border-t border-brownBorder/70 bg-creamBg px-4 py-3 text-center text-xs uppercase tracking-wider text-brownMuted">
+        <div className="relative border-t border-brownBorder/70 bg-creamBg px-4 py-3 text-center text-xs uppercase tracking-wider text-brownMuted">
           <a href="https://evan-huang.dev" className="hover:underline">
             Evan
           </a>
-          's Server | pls dont hack me pls I need this
+          {"'s Server | "}
+          <span
+            className="cursor-pointer"
+            onPointerEnter={showBannerPreview}
+            onPointerMove={moveBannerPreview}
+            onPointerLeave={hideBannerPreview}
+          >
+            pls dont hack me pls I need this
+          </span>
+        </div>
+
+        <div
+          className="pointer-events-none fixed left-0 top-0 z-40 transition-opacity duration-150"
+          style={{
+            opacity: bannerPreview.visible ? 1 : 0,
+            transform: `translate3d(${bannerPreview.x}px, ${bannerPreview.y}px, 0)`,
+          }}
+        >
+          <div className="border border-[#4e3221] bg-[#f6ead1] p-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+            <img
+              src="/images/speed.png"
+              alt="speed reaction"
+              className="block h-auto w-40 border border-[#4e3221] object-cover"
+            />
+          </div>
         </div>
 
         <div className="relative flex-1 w-full">
@@ -1430,41 +1562,50 @@ export default function ServerCaseBlueprint({
                 strokeWidth="2"
                 opacity="0"
               />
+              <path
+                ref={gpuPathRef}
+                fill="none"
+                stroke="#3a2418"
+                strokeWidth="2"
+                opacity="0"
+              />
             </svg>
 
             <div className="pointer-events-none absolute bottom-6 left-6 z-20 flex items-end gap-4 text-[#3a2418]">
-              <div className="flex items-end gap-3">
-                <div className="flex flex-col items-center gap-2">
+              <div className="border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+                  <span className="origin-left -rotate-90">Zoom</span>
+                  <span ref={zoomScaleLabelRef} className="font-mono text-[#3a2418]">
+                    0%
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <span className="text-[9px] uppercase tracking-[0.28em] text-[#6b4a36]">
                     In
                   </span>
 
-                  <div
-                    ref={zoomTrackRef}
-                    className="pointer-events-auto flex h-28 w-7 cursor-pointer items-end border border-[#4e3221] bg-[#efe1c3] p-[3px] shadow-[4px_4px_0_rgba(78,50,33,0.18)]"
-                    onPointerDown={startHudDrag("zoom")}
-                  >
+                  <div className="flex h-28 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
                     <div
-                      ref={zoomScaleFillRef}
-                      className="w-full bg-[#6b4a36] transition-[height] duration-150"
-                      style={{ height: "0%" }}
-                    />
+                      ref={zoomTrackRef}
+                      className="pointer-events-auto relative h-full w-7 cursor-pointer overflow-visible"
+                      onPointerDown={startHudDrag("zoom")}
+                    >
+                      <div
+                        ref={zoomScaleFillRef}
+                        className="absolute bottom-0 left-0 w-full bg-[#6b4a36] transition-[height] duration-150"
+                        style={{ height: "0%" }}
+                      />
+                      <div
+                        ref={zoomIndicatorRef}
+                        className="absolute left-1/2 h-[3px] w-[calc(100%+12px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
+                        style={{ bottom: "0%" }}
+                      />
+                    </div>
                   </div>
 
                   <span className="text-[9px] uppercase tracking-[0.28em] text-[#6b4a36]">
                     Out
-                  </span>
-                </div>
-
-                <div className="min-w-[44px] border border-[#4e3221] bg-[#f6ead1] px-2 py-1 text-center shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                  <div className="text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
-                    Zoom
-                  </div>
-                  <span
-                    ref={zoomScaleLabelRef}
-                    className="mt-1 block font-mono text-xs text-[#3a2418]"
-                  >
-                    0%
                   </span>
                 </div>
               </div>
@@ -1480,13 +1621,18 @@ export default function ServerCaseBlueprint({
                 <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
                   <div
                     ref={scrollTrackRef}
-                    className="pointer-events-auto h-full cursor-pointer"
+                    className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
                     onPointerDown={startHudDrag("scroll")}
                   >
                     <div
                       ref={scrollProgressFillRef}
                       className="h-full bg-[#6b4a36] transition-[width] duration-150"
                       style={{ width: "0%" }}
+                    />
+                    <div
+                      ref={scrollIndicatorRef}
+                      className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                      style={{ left: "0%" }}
                     />
                   </div>
                 </div>
@@ -1509,6 +1655,15 @@ export default function ServerCaseBlueprint({
               contentRef={ramContentRef}
               position={panelPositions.ram}
               onDragStart={startPanelDrag("ram")}
+            />
+
+            <TelemetryWindow
+              data={gpuTelemetry}
+              innerRef={gpuPanelRef}
+              shellRef={gpuShellRef}
+              contentRef={gpuContentRef}
+              position={panelPositions.gpu}
+              onDragStart={startPanelDrag("gpu")}
             />
           </div>
         </div>
