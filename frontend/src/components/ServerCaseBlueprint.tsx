@@ -47,11 +47,17 @@ const HOVER_PARTS: Record<string, number> = {
   RAM003: 0.04,
   CPU: 0.05,
   CPU001: 0.08,
+  GPUBase: 0.035,
+  GPUBase001: 0.035,
+  GPUFan: 0.03,
 };
 
 const RAM_PART_NAMES = ["RAM", "RAM001", "RAM002", "RAM003"];
 const CPU_PART_NAMES = ["CPU", "CPU001"];
 const MOTHERBOARD_PART_NAMES = ["MotherBoard"];
+const GPU_PART_NAMES = ["GPUBase", "GPUBase001", "GPUFan"];
+const GPU_FAN_NAMES = ["GPUFan"];
+const GPU_FAN_SPIN_SPEED = 8;
 
 const DVD_PREROLL_DIST = 0.5;
 const DVD_TRAY_DIST = 0.08;
@@ -79,6 +85,7 @@ const GROUP_5_END = GROUP_5_START + GROUP_DURATION;
 
 const GROUP_6_START = GROUP_5_START + GROUP_OFFSET;
 const GROUP_6_END = GROUP_6_START + GROUP_DURATION;
+const FINAL_ANIMATION_PROGRESS = Math.min(0.995, GROUP_6_END + 0.06);
 
 const MIN_VISIBLE_SCALE = 0.0001;
 const PANEL_WIDTH = 240;
@@ -551,6 +558,7 @@ export default function ServerCaseBlueprint({
   const zoomScaleFillRef = useRef<HTMLDivElement>(null);
   const zoomScaleLabelRef = useRef<HTMLSpanElement>(null);
   const currentProgressRef = useRef(0);
+  const animationProgressRef = useRef(0);
   const setScrollProgressRef = useRef<(progress: number) => void>(() => {});
   const setZoomProgressRef = useRef<(progress: number) => void>(() => {});
   const dragStateRef = useRef<{
@@ -754,6 +762,7 @@ export default function ServerCaseBlueprint({
     const hoverCurrent = new Map<string, number>();
     const hoverBaseWorld = new Map<string, Vector3>();
     const telemetryAnchorWorld = new Map<PanelKey, Vector3>();
+    const gpuFanBaseRotation = new Map<string, number>();
 
     let maxDistance = 0.45;
     let rootGroup: Group | null = null;
@@ -939,7 +948,7 @@ export default function ServerCaseBlueprint({
           : null;
         const revealProgress = anchor?.visible
           ? getPhaseProgress(
-              currentProgressRef.current,
+              animationProgressRef.current,
               panelConfig.revealStart,
               panelConfig.revealStart + PANEL_REVEAL_DURATION
             )
@@ -1041,6 +1050,15 @@ export default function ServerCaseBlueprint({
         obj.scale.copy(origScale);
         obj.visible = true;
       }
+
+      const spinTime = performance.now() * 0.001;
+      for (const fanName of GPU_FAN_NAMES) {
+        const fan = hoverMap.get(fanName) ?? rootGroup.getObjectByName(fanName);
+        if (!fan) continue;
+
+        const baseRotation = gpuFanBaseRotation.get(fanName) ?? 0;
+        fan.rotation.y = baseRotation + spinTime * GPU_FAN_SPIN_SPEED;
+      }
     };
 
     const getSectionScrollProgress = (): number => {
@@ -1093,9 +1111,10 @@ export default function ServerCaseBlueprint({
       }
 
       currentProgressRef.current = currentProgress;
+      animationProgressRef.current = currentProgress * FINAL_ANIMATION_PROGRESS;
 
-      tl.seek(currentProgress * tl.duration);
-      updateCasePositions(currentProgress);
+      tl.seek(animationProgressRef.current * tl.duration);
+      updateCasePositions(animationProgressRef.current);
 
       for (const [name] of hoverMap) {
         const target = hoverTarget.get(name) ?? 0;
@@ -1116,6 +1135,7 @@ export default function ServerCaseBlueprint({
       const rect = renderer.domElement.getBoundingClientRect();
       const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const ny = ((e.clientY - rect.top) / rect.height) * -2 + 1;
+      let gpuHovered = false;
 
       for (const [name, obj] of hoverMap) {
         const wp = new Vector3();
@@ -1132,7 +1152,17 @@ export default function ServerCaseBlueprint({
         const ndcY = (sy / renderer.domElement.height) * -2 + 1;
         const hovered = Math.hypot(nx - ndcX, ny - ndcY) < 0.12;
 
+        if (GPU_PART_NAMES.includes(name)) {
+          gpuHovered ||= hovered;
+          continue;
+        }
+
         hoverTarget.set(name, hovered ? HOVER_PARTS[name] ?? 0.05 : 0);
+      }
+
+      for (const gpuName of GPU_PART_NAMES) {
+        if (!hoverMap.has(gpuName)) continue;
+        hoverTarget.set(gpuName, gpuHovered ? HOVER_PARTS[gpuName] ?? 0.05 : 0);
       }
     };
 
@@ -1262,6 +1292,12 @@ export default function ServerCaseBlueprint({
         hoverBaseWorld.set(name, wp.clone());
         hoverTarget.set(name, 0);
         hoverCurrent.set(name, 0);
+      }
+
+      for (const fanName of GPU_FAN_NAMES) {
+        const fan = hoverMap.get(fanName) ?? rootGroup.getObjectByName(fanName);
+        if (!fan) continue;
+        gpuFanBaseRotation.set(fanName, fan.rotation.y);
       }
 
       for (const panelConfig of PANEL_CONFIGS) {
