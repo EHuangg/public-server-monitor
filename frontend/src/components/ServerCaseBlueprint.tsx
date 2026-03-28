@@ -981,15 +981,17 @@ export default function ServerCaseBlueprint({
       const zoomProgress = clamp01((controls.maxDistance - zoomDistance) / zoomRange);
 
       if (zoomFill) {
-        zoomFill.style.height = `${zoomProgress * 100}%`;
+        zoomFill.style.width = `${zoomProgress * 100}%`;
       }
 
       if (zoomIndicator) {
-        zoomIndicator.style.bottom = `${zoomProgress * 100}%`;
+        zoomIndicator.style.left = `${100 - zoomProgress * 100}%`;
       }
 
       if (zoomLabel) {
-        zoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`;
+        zoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`
+          .split("")
+          .join("\n");
       }
     };
 
@@ -1572,41 +1574,38 @@ export default function ServerCaseBlueprint({
             </svg>
 
             <div className="pointer-events-none absolute bottom-6 left-6 z-20 flex items-end gap-4 text-[#3a2418]">
-              <div className="border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
-                  <span className="origin-left -rotate-90">Zoom</span>
-                  <span ref={zoomScaleLabelRef} className="font-mono text-[#3a2418]">
-                    0%
-                  </span>
-                </div>
+              <div className="relative h-[220px] w-[52px]">
+                <div className="pointer-events-none absolute left-1/2 top-1/2 w-[220px] -translate-x-1/2 -translate-y-1/2 rotate-90">
+                  <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+                    <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+                      <span
+                        ref={zoomScaleLabelRef}
+                        className="font-mono tracking-normal text-[#3a2418]"
+                      >
+                        0%
+                      </span>
+                      <span>Zoom</span>
+                    </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[9px] uppercase tracking-[0.28em] text-[#6b4a36]">
-                    In
-                  </span>
-
-                  <div className="flex h-28 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
-                    <div
-                      ref={zoomTrackRef}
-                      className="pointer-events-auto relative h-full w-7 cursor-pointer overflow-visible"
-                      onPointerDown={startHudDrag("zoom")}
-                    >
+                    <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
                       <div
-                        ref={zoomScaleFillRef}
-                        className="absolute bottom-0 left-0 w-full bg-[#6b4a36] transition-[height] duration-150"
-                        style={{ height: "0%" }}
-                      />
-                      <div
-                        ref={zoomIndicatorRef}
-                        className="absolute left-1/2 h-[3px] w-[calc(100%+12px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
-                        style={{ bottom: "0%" }}
-                      />
+                        ref={zoomTrackRef}
+                        className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
+                        onPointerDown={startHudDrag("zoom")}
+                      >
+                        <div
+                          ref={zoomScaleFillRef}
+                          className="ml-auto h-full bg-[#6b4a36] transition-[width] duration-150"
+                          style={{ width: "0%" }}
+                        />
+                        <div
+                          ref={zoomIndicatorRef}
+                          className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                          style={{ left: "0%" }}
+                        />
+                      </div>
                     </div>
                   </div>
-
-                  <span className="text-[9px] uppercase tracking-[0.28em] text-[#6b4a36]">
-                    Out
-                  </span>
                 </div>
               </div>
 
