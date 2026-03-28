@@ -512,10 +512,7 @@ export default function ServerCaseBlueprint({
         const [start, end] = getWindowForPart(name);
         const phase = getPhaseProgress(progress, start, end);
 
-        const targetWorld = bw.clone().addScaledVector(
-          wd,
-          phase * maxDistance
-        );
+        const targetWorld = bw.clone().addScaledVector(wd, phase * maxDistance);
 
         const localPos = targetWorld.clone();
         obj.parent.worldToLocal(localPos);
@@ -767,10 +764,13 @@ export default function ServerCaseBlueprint({
   }, []);
 
   return (
-    <section ref={sectionRef} className="relative w-full min-h-[440vh]">
+    <section ref={sectionRef} className="relative w-full min-h-[270vh]">
       <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden">
         <div className="border-t border-brownBorder/70 bg-creamBg px-4 py-3 text-center text-xs uppercase tracking-wider text-brownMuted">
-          Home Server Dashboard — Active Monitoring
+          <a href="https://evan-huang.dev" className="hover:underline">
+            Evan
+          </a>
+          's Server | pls dont hack me pls I need this
         </div>
 
         <div className="relative flex-1 w-full">
