@@ -34,6 +34,9 @@ import type { MetricsResponse } from "@/lib/types";
 const MODEL_URL =
   process.env.NEXT_PUBLIC_SERVER_CASE_GLB ?? "/models/server-case.glb";
 
+const BLUEPRINT_BASE_COLOR = new Color(0xfdf4df);
+const BLUEPRINT_HIGHLIGHT_COLOR = new Color(0xd9eac7);
+
 /**
  * Keep the current working scene behavior.
  * Do not "correct" axes beyond the overrides below.
@@ -333,7 +336,7 @@ function applyBlueprintStyle(mesh: Mesh): void {
   if (!geom) return;
 
   const mat = new MeshBasicMaterial({
-    color: 0xfdf4df,
+    color: BLUEPRINT_BASE_COLOR.clone(),
     transparent: false,
     opacity: 1,
     depthWrite: true,
@@ -345,6 +348,7 @@ function applyBlueprintStyle(mesh: Mesh): void {
   });
 
   mesh.material = mat;
+  mesh.userData.blueprintBaseColor = BLUEPRINT_BASE_COLOR.getHex();
 
   const edges = new EdgesGeometry(geom, 15);
   const line = new LineSegments(
@@ -353,6 +357,7 @@ function applyBlueprintStyle(mesh: Mesh): void {
   );
 
   line.renderOrder = 1;
+  mesh.userData.blueprintEdge = line;
   mesh.add(line);
 }
 
@@ -507,11 +512,20 @@ type SidebarTelemetryItem = {
   title: string;
   statA: string;
   valueA: string;
-  statB: string;
-  valueB: string;
-  load: string;
+  statB?: string;
+  valueB?: string;
+  load?: string;
   percent: number | null;
 };
+
+function appendPercentSuffix(
+  value: string,
+  percent: number | null | undefined
+): string {
+  const clamped = clampPercent(percent);
+  if (!value || value === "—" || clamped == null) return value;
+  return `${value} (${clamped.toFixed(1)}%)`;
+}
 
 function extractModelTag(model: string | null | undefined): string | null {
   if (!model || !model.trim()) return null;
@@ -810,32 +824,36 @@ function DesktopTelemetrySidebar({
               className={[
                 "border-b px-4 py-3 transition-colors last:border-b-0",
                 isActive
-                  ? "border-[#4e3221] bg-[#ead9b7]"
+                  ? "border-[#4e3221] bg-[#d9eac7]"
                   : "border-[#4e3221] bg-[#f6ead1] hover:bg-[#efe1c3]",
               ].join(" ")}
               onPointerEnter={() => onHoverChange(item.key)}
               onPointerLeave={() => onHoverChange(null)}
             >
               <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="truncate text-[11px] uppercase tracking-[0.18em] text-[#3a2418]">
+                <span className="truncate text-[15px] uppercase tracking-[0.14em] text-[#3a2418]">
                   {item.title}
                 </span>
-                {item.percent != null ? (
-                  <span className="font-mono text-[11px] text-[#6b4a36]">
+                {item.load ? (
+                  <span className="font-mono text-[14px] text-[#6b4a36]">
                     {item.load}
                   </span>
                 ) : null}
               </div>
 
-              <div className="grid grid-cols-[92px_1fr] gap-x-3 gap-y-1 text-[9px] uppercase tracking-[0.12em] text-[#6b4a36]">
+              <div className="grid grid-cols-[112px_1fr] gap-x-3 gap-y-2 text-[11px] uppercase tracking-[0.1em] text-[#6b4a36]">
                 <span>{item.statA}</span>
-                <span className="truncate font-mono normal-case tracking-normal text-[#3a2418]">
+                <span className="truncate font-mono text-[15px] normal-case tracking-normal text-[#3a2418]">
                   {item.valueA}
                 </span>
-                <span>{item.statB}</span>
-                <span className="truncate font-mono normal-case tracking-normal text-[#3a2418]">
-                  {item.valueB}
-                </span>
+                {item.statB && item.valueB ? (
+                  <>
+                    <span>{item.statB}</span>
+                    <span className="truncate font-mono text-[15px] normal-case tracking-normal text-[#3a2418]">
+                      {item.valueB}
+                    </span>
+                  </>
+                ) : null}
               </div>
 
               {item.percent != null ? (
@@ -1035,17 +1053,17 @@ export default function ServerCaseBlueprint({
         valueA: cpuTelemetry.primaryValue,
         statB: cpuTelemetry.secondaryLabel,
         valueB: cpuTelemetry.secondaryValue,
-        load: formatPercent(cpuTelemetry.percent),
+        load: cpuTelemetry.percent != null ? formatPercent(cpuTelemetry.percent) : undefined,
         percent: cpuTelemetry.percent,
       },
       {
         key: "ram",
         title: "RAM",
         statA: ramTelemetry.primaryLabel,
-        valueA: ramTelemetry.primaryValue,
+        valueA: appendPercentSuffix(ramTelemetry.primaryValue, ramTelemetry.percent),
         statB: ramTelemetry.secondaryLabel,
         valueB: ramTelemetry.secondaryValue,
-        load: formatPercent(ramTelemetry.percent),
+        load: undefined,
         percent: ramTelemetry.percent,
       },
       {
@@ -1054,28 +1072,28 @@ export default function ServerCaseBlueprint({
         statA: gpuTelemetry.primaryLabel,
         valueA: gpuTelemetry.primaryValue,
         statB: gpuTelemetry.secondaryLabel,
-        valueB: gpuTelemetry.secondaryValue,
-        load: formatPercent(gpuTelemetry.percent),
+        valueB: appendPercentSuffix(gpuTelemetry.secondaryValue, gpuTelemetry.percent),
+        load: undefined,
         percent: gpuTelemetry.percent,
       },
       {
         key: "hdd",
         title: "HDD",
         statA: hddTelemetry.primaryLabel,
-        valueA: hddTelemetry.primaryValue,
+        valueA: appendPercentSuffix(hddTelemetry.primaryValue, hddTelemetry.percent),
         statB: hddTelemetry.secondaryLabel,
         valueB: hddTelemetry.secondaryValue,
-        load: formatPercent(hddTelemetry.percent),
+        load: undefined,
         percent: hddTelemetry.percent,
       },
       {
         key: "ssd",
         title: "SSD",
         statA: ssdTelemetry.primaryLabel,
-        valueA: ssdTelemetry.primaryValue,
+        valueA: appendPercentSuffix(ssdTelemetry.primaryValue, ssdTelemetry.percent),
         statB: ssdTelemetry.secondaryLabel,
         valueB: ssdTelemetry.secondaryValue,
-        load: formatPercent(ssdTelemetry.percent),
+        load: undefined,
         percent: ssdTelemetry.percent,
       },
       {
@@ -1086,9 +1104,7 @@ export default function ServerCaseBlueprint({
         ),
         statA: caseFanATelemetry.primaryLabel,
         valueA: caseFanATelemetry.primaryValue,
-        statB: caseFanATelemetry.secondaryLabel,
-        valueB: caseFanATelemetry.secondaryValue,
-        load: formatPercent(caseFanATelemetry.percent),
+        load: undefined,
         percent: caseFanATelemetry.percent,
       },
       {
@@ -1099,9 +1115,7 @@ export default function ServerCaseBlueprint({
         ),
         statA: cpuFanTelemetry.primaryLabel,
         valueA: cpuFanTelemetry.primaryValue,
-        statB: cpuFanTelemetry.secondaryLabel,
-        valueB: cpuFanTelemetry.secondaryValue,
-        load: formatPercent(cpuFanTelemetry.percent),
+        load: undefined,
         percent: cpuFanTelemetry.percent,
       },
     ],
@@ -1593,6 +1607,7 @@ export default function ServerCaseBlueprint({
     };
 
     const updateHud = () => {
+      const scrollProgress = targetProgress;
       const scrollFill = scrollProgressFillRef.current;
       const scrollIndicator = scrollIndicatorRef.current;
       const mobileScrollFill = mobileScrollProgressFillRef.current;
@@ -1603,19 +1618,19 @@ export default function ServerCaseBlueprint({
       const mobileZoomIndicator = mobileZoomIndicatorRef.current;
 
       if (scrollFill) {
-        scrollFill.style.width = `${currentProgressRef.current * 100}%`;
+        scrollFill.style.width = `${scrollProgress * 100}%`;
       }
 
       if (scrollIndicator) {
-        scrollIndicator.style.left = `${currentProgressRef.current * 100}%`;
+        scrollIndicator.style.left = `${scrollProgress * 100}%`;
       }
 
       if (mobileScrollFill) {
-        mobileScrollFill.style.height = `${currentProgressRef.current * 100}%`;
+        mobileScrollFill.style.height = `${scrollProgress * 100}%`;
       }
 
       if (mobileScrollIndicator) {
-        mobileScrollIndicator.style.bottom = `${currentProgressRef.current * 100}%`;
+        mobileScrollIndicator.style.bottom = `${scrollProgress * 100}%`;
       }
 
       const zoomRange = Math.max(0.0001, controls.maxDistance - controls.minDistance);
@@ -1787,12 +1802,25 @@ export default function ServerCaseBlueprint({
         const curOffset = hoverCurrent.get(name) ?? 0;
         const hoverDirection = HOVER_DIRECTIONS[name] ?? WORLD_UP;
         const targetWorld = base.clone().addScaledVector(hoverDirection, curOffset);
+        const hoverAmount = clamp01(curOffset / Math.max(HOVER_PARTS[name] ?? 0.05, 0.0001));
         const localPos = targetWorld.clone();
         obj.parent.worldToLocal(localPos);
         obj.position.copy(localPos);
 
         obj.scale.copy(origScale);
         obj.visible = true;
+
+        obj.traverse((child) => {
+          if (!(child instanceof Mesh)) return;
+          const material = child.material;
+          if (!(material instanceof MeshBasicMaterial)) return;
+          const baseColor = new Color(
+            typeof child.userData.blueprintBaseColor === "number"
+              ? child.userData.blueprintBaseColor
+              : BLUEPRINT_BASE_COLOR.getHex()
+          );
+          material.color.copy(baseColor).lerp(BLUEPRINT_HIGHLIGHT_COLOR, hoverAmount);
+        });
       }
 
       const spinTime = performance.now() * 0.001;
@@ -2145,6 +2173,12 @@ export default function ServerCaseBlueprint({
         hoverTarget.set(name, 0);
         hoverCurrent.set(name, 0);
         hoverPickTargets.push(obj);
+        obj.traverse((child) => {
+          if (!(child instanceof Mesh)) return;
+          const edge = child.userData.blueprintEdge;
+          if (!(edge instanceof LineSegments)) return;
+          edge.scale.setScalar(1.01);
+        });
       }
 
       for (const config of SPINNING_FAN_CONFIGS) {
