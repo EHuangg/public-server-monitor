@@ -14,7 +14,9 @@ import {
   MeshBasicMaterial,
   Object3D,
   PerspectiveCamera,
+  Raycaster,
   Scene,
+  Vector2,
   Vector3,
   WebGLRenderer,
 } from "three";
@@ -800,7 +802,7 @@ function DesktopTelemetrySidebar({
       </div>
       <div className="h-[calc(100%-11.5rem)] overflow-y-auto px-0 py-0">
         {items.map((item) => {
-          const isActive = item.key === activeKey;
+          const isActive = item.key != null && item.key === activeKey;
 
           return (
             <div
@@ -837,7 +839,7 @@ function DesktopTelemetrySidebar({
               </div>
 
               {item.percent != null ? (
-                <div className="mt-3 h-1.5 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
+                <div className="mt-3 h-2 overflow-hidden border border-[#4e3221] bg-[#e7d7b4]">
                   <div
                     className="h-full bg-[#6b4a36] transition-[width] duration-300"
                     style={{ width: `${item.percent ?? 0}%` }}
@@ -967,6 +969,7 @@ export default function ServerCaseBlueprint({
   const animationProgressRef = useRef(0);
   const metricsRef = useRef<MetricsResponse | null>(metrics);
   const sidebarHoverKeyRef = useRef<PanelKey | null>(null);
+  const modelHoverKeyRef = useRef<PanelKey | null>(null);
   const syncSidebarHoverRef = useRef<() => void>(() => {});
   const setScrollProgressRef = useRef<(progress: number) => void>(() => {});
   const setZoomProgressRef = useRef<(progress: number) => void>(() => {});
@@ -985,6 +988,7 @@ export default function ServerCaseBlueprint({
   } | null>(null);
   const didInitPanelPositionsRef = useRef(false);
   const [sidebarHoverKey, setSidebarHoverKey] = useState<PanelKey | null>(null);
+  const [modelHoverKey, setModelHoverKey] = useState<PanelKey | null>(null);
 
   const cpuTelemetry = useMemo(() => extractCpuTelemetry(metrics), [metrics]);
   const ramTelemetry = useMemo(() => extractRamTelemetry(metrics), [metrics]);
@@ -1130,6 +1134,10 @@ export default function ServerCaseBlueprint({
     sidebarHoverKeyRef.current = sidebarHoverKey;
     syncSidebarHoverRef.current();
   }, [sidebarHoverKey]);
+
+  useEffect(() => {
+    modelHoverKeyRef.current = modelHoverKey;
+  }, [modelHoverKey]);
 
   useEffect(() => {
     return () => {
@@ -1449,6 +1457,7 @@ export default function ServerCaseBlueprint({
     const hoverTarget = new Map<string, number>();
     const hoverCurrent = new Map<string, number>();
     const hoverBaseWorld = new Map<string, Vector3>();
+    const hoverPickTargets: Object3D[] = [];
     const telemetryAnchorWorld = new Map<PanelKey, Vector3>();
     const spinningFanBaseRotations = new Map<
       string,
@@ -1461,6 +1470,8 @@ export default function ServerCaseBlueprint({
     let raf = 0;
 
     const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+    const hoverRaycaster = new Raycaster();
+    const hoverPointer = new Vector2();
 
     const getWindowForPart = (name: string): [number, number] => {
       if (name === "FrontPanelDVD" || name === "FrontPanelDVDDrive") {
@@ -1895,6 +1906,27 @@ export default function ServerCaseBlueprint({
         ? PANEL_CONFIGS.find((config) => config.key === sidebarKey)
         : null;
 
+      let nextModelHoverKey: PanelKey | null = null;
+
+      if (hoveredNames.has("CaseFan") || hoveredNames.has("CaseFan001")) {
+        nextModelHoverKey = "caseFanA";
+      } else if (hoveredNames.has("HDD")) {
+        nextModelHoverKey = "hdd";
+      } else if (hoveredNames.has("SSD")) {
+        nextModelHoverKey = "ssd";
+      } else if (GPU_PART_NAMES.some((name) => hoveredNames.has(name))) {
+        nextModelHoverKey = "gpu";
+      } else if (CPU_PART_NAMES.some((name) => hoveredNames.has(name))) {
+        nextModelHoverKey = "cpu";
+      } else if (RAM_PART_NAMES.some((name) => hoveredNames.has(name))) {
+        nextModelHoverKey = "ram";
+      }
+
+      if (modelHoverKeyRef.current !== nextModelHoverKey) {
+        modelHoverKeyRef.current = nextModelHoverKey;
+        setModelHoverKey(nextModelHoverKey);
+      }
+
       if (sidebarConfig) {
         for (const partName of sidebarConfig.partNames) {
           hoveredNames.add(partName);
@@ -1942,32 +1974,41 @@ export default function ServerCaseBlueprint({
       }
     };
 
+    const getHoverRootName = (object: Object3D | null): string | null => {
+      let current: Object3D | null = object;
+
+      while (current) {
+        if (hoverMap.has(current.name)) {
+          return current.name;
+        }
+        current = current.parent;
+      }
+
+      return null;
+    };
+
     const onMouseMove = (e: MouseEvent) => {
       if (!rootGroup || hoverMap.size === 0) return;
 
       const rect = renderer.domElement.getBoundingClientRect();
-      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const ny = ((e.clientY - rect.top) / rect.height) * -2 + 1;
       const hoveredNames = new Set<string>();
 
-      for (const [name, obj] of hoverMap) {
-        const wp = new Vector3();
-        obj.getWorldPosition(wp);
+      hoverPointer.set(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        ((e.clientY - rect.top) / rect.height) * -2 + 1
+      );
+      hoverRaycaster.setFromCamera(hoverPointer, camera);
 
-        const { x: sx, y: sy } = projectWorldToScreen(
-          wp,
-          camera,
-          renderer.domElement.width,
-          renderer.domElement.height
-        );
+      const intersections = hoverRaycaster.intersectObjects(hoverPickTargets, true);
 
-        const ndcX = (sx / renderer.domElement.width) * 2 - 1;
-        const ndcY = (sy / renderer.domElement.height) * -2 + 1;
-        const hovered = Math.hypot(nx - ndcX, ny - ndcY) < 0.12;
+      for (const intersection of intersections) {
+        if (!(intersection.object instanceof Mesh)) continue;
 
-        if (hovered) {
-          hoveredNames.add(name);
-        }
+        const hoverName = getHoverRootName(intersection.object);
+        if (!hoverName) continue;
+
+        hoveredNames.add(hoverName);
+        break;
       }
 
       setHoverTargets(hoveredNames);
@@ -2103,6 +2144,7 @@ export default function ServerCaseBlueprint({
         hoverBaseWorld.set(name, wp.clone());
         hoverTarget.set(name, 0);
         hoverCurrent.set(name, 0);
+        hoverPickTargets.push(obj);
       }
 
       for (const config of SPINNING_FAN_CONFIGS) {
@@ -2277,7 +2319,7 @@ export default function ServerCaseBlueprint({
       <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden relative">
         <DesktopTelemetrySidebar
           items={desktopSidebarItems}
-          activeKey={sidebarHoverKey}
+          activeKey={sidebarHoverKey ?? modelHoverKey}
           onHoverChange={setSidebarHoverKey}
           zoomTrackRef={zoomTrackRef}
           zoomScaleFillRef={zoomScaleFillRef}
