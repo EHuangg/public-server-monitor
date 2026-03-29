@@ -57,8 +57,8 @@ const HOVER_PARTS: Record<string, number> = {
 };
 
 const HOVER_DIRECTIONS: Record<string, Vector3> = {
-  HDD: new Vector3(-1, 0, 0),
-  SSD: new Vector3(-1, 0, 0),
+  HDD: new Vector3(1, 0, 0),
+  SSD: new Vector3(1, 0, 0),
   GPUBase: new Vector3(-1, 0, 0),
   GPUBase001: new Vector3(-1, 0, 0),
   GPUFan: new Vector3(-1, 0, 0),
@@ -76,8 +76,7 @@ const CASE_FAN_A_PART_NAMES = ["CaseFan"];
 const CASE_FAN_B_PART_NAMES = ["CaseFan001"];
 const CASE_FAN_HOVER_PART_NAMES = ["CaseFan", "CaseFan001"];
 const GPU_FAN_SPIN_SPEED = 8;
-const CASE_FAN_MAX_SPIN_SPEED = 9;
-const CASE_FAN_REFERENCE_RPM = 1400;
+const RPM_TO_RAD_PER_SEC = (Math.PI * 2) / 60;
 
 const SPINNING_FAN_CONFIGS = [
   { names: ["GPUFan"], axis: "y" as const, speed: GPU_FAN_SPIN_SPEED },
@@ -502,7 +501,7 @@ type MobileSummaryRow = {
 };
 
 type SidebarTelemetryItem = {
-  key: PanelKey;
+  key: PanelKey | null;
   title: string;
   statA: string;
   valueA: string;
@@ -511,6 +510,63 @@ type SidebarTelemetryItem = {
   load: string;
   percent: number | null;
 };
+
+function extractModelTag(model: string | null | undefined): string | null {
+  if (!model || !model.trim()) return null;
+
+  const cleaned = model
+    .replace(/_/g, " ")
+    .replace(/\(R\)|\(TM\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return null;
+
+  if (/intel/i.test(cleaned)) return "Intel";
+  if (/amd/i.test(cleaned)) return "AMD";
+  if (/nvidia/i.test(cleaned)) return "NVIDIA";
+  if (/dell/i.test(cleaned)) return "Dell";
+
+  return cleaned.split(" ")[0] ?? null;
+}
+
+function buildPartTitle(label: string, model: string | null | undefined): string {
+  const tag = extractModelTag(model);
+  return tag ? `${label} - ${tag}` : label;
+}
+
+function getFanMetricByLabel(
+  metrics: MetricsResponse | null,
+  kind: "case" | "cpu"
+) {
+  const fans = metrics?.fans ?? [];
+
+  if (kind === "cpu") {
+    return (
+      fans.find((fan) => {
+        const label = fan.label?.toLowerCase() ?? "";
+        return label.includes("processor") || label.includes("cpu");
+      }) ?? null
+    );
+  }
+
+  return (
+    fans.find((fan) => {
+      const label = fan.label?.toLowerCase() ?? "";
+      return (
+        label.includes("motherboard") ||
+        label.includes("system") ||
+        label.includes("chassis") ||
+        label.includes("case")
+      );
+    }) ??
+    fans.find((fan) => {
+      const label = fan.label?.toLowerCase() ?? "";
+      return !label.includes("processor") && !label.includes("cpu");
+    }) ??
+    null
+  );
+}
 
 function extractCpuTelemetry(metrics: MetricsResponse | null): PanelData {
   return {
@@ -579,7 +635,12 @@ function extractFanTelemetry(
   index: number,
   title: string
 ): PanelData {
-  const fan = metrics?.fans?.[index] ?? null;
+  const fan =
+    title === "Case Fan"
+      ? getFanMetricByLabel(metrics, "case")
+      : title === "CPU Fan"
+        ? getFanMetricByLabel(metrics, "cpu")
+        : metrics?.fans?.[index] ?? null;
 
   return {
     title,
@@ -733,36 +794,38 @@ function DesktopTelemetrySidebar({
   onScrollDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   return (
-    <div className="pointer-events-auto absolute left-4 top-4 z-20 hidden w-[240px] overflow-hidden border border-[#4e3221] bg-[#f6ead1] text-[#3a2418] shadow-[4px_4px_0_rgba(78,50,33,0.18)] md:block">
-      <div className="border-b border-[#4e3221] bg-[#ead9b7] px-3 py-2 text-[9px] uppercase tracking-[0.22em] text-[#3a2418]">
+    <div className="pointer-events-auto absolute inset-y-0 left-0 z-30 hidden w-[340px] overflow-hidden border-r border-[#4e3221] bg-[#f6ead1] text-[#3a2418] shadow-[4px_0_0_rgba(78,50,33,0.18)] md:block">
+      <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-4 text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
         System Telemetry
       </div>
-      <div className="max-h-[calc(100vh-9rem)] overflow-y-auto px-2 py-2">
+      <div className="h-[calc(100%-11.5rem)] overflow-y-auto px-0 py-0">
         {items.map((item) => {
           const isActive = item.key === activeKey;
 
           return (
             <div
-              key={item.key}
+              key={`${item.key ?? "static"}-${item.title}`}
               className={[
-                "mb-2 border bg-[#efe1c3] px-2 py-2 transition-colors last:mb-0",
+                "border-b px-4 py-3 transition-colors last:border-b-0",
                 isActive
-                  ? "border-[#3a2418] bg-[#ead9b7]"
-                  : "border-[#4e3221] hover:bg-[#f1e3c6]",
+                  ? "border-[#4e3221] bg-[#ead9b7]"
+                  : "border-[#4e3221] bg-[#f6ead1] hover:bg-[#efe1c3]",
               ].join(" ")}
               onPointerEnter={() => onHoverChange(item.key)}
               onPointerLeave={() => onHoverChange(null)}
             >
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="truncate text-[8px] uppercase tracking-[0.2em] text-[#3a2418]">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="truncate text-[11px] uppercase tracking-[0.18em] text-[#3a2418]">
                   {item.title}
                 </span>
-                <span className="font-mono text-[10px] text-[#6b4a36]">
-                  {item.load}
-                </span>
+                {item.percent != null ? (
+                  <span className="font-mono text-[11px] text-[#6b4a36]">
+                    {item.load}
+                  </span>
+                ) : null}
               </div>
 
-              <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[8px] uppercase tracking-[0.12em] text-[#6b4a36]">
+              <div className="grid grid-cols-[92px_1fr] gap-x-3 gap-y-1 text-[9px] uppercase tracking-[0.12em] text-[#6b4a36]">
                 <span>{item.statA}</span>
                 <span className="truncate font-mono normal-case tracking-normal text-[#3a2418]">
                   {item.valueA}
@@ -773,17 +836,19 @@ function DesktopTelemetrySidebar({
                 </span>
               </div>
 
-              <div className="mt-2 h-1.5 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
-                <div
-                  className="h-full bg-[#6b4a36] transition-[width] duration-300"
-                  style={{ width: `${item.percent ?? 0}%` }}
-                />
-              </div>
+              {item.percent != null ? (
+                <div className="mt-3 h-1.5 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
+                  <div
+                    className="h-full bg-[#6b4a36] transition-[width] duration-300"
+                    style={{ width: `${item.percent ?? 0}%` }}
+                  />
+                </div>
+              ) : null}
             </div>
           );
         })}
       </div>
-      <div className="border-t border-[#4e3221] bg-[#ead9b7] px-2 py-2">
+      <div className="border-t border-[#4e3221] bg-[#ead9b7] px-4 pb-12 pt-4">
         <div className="grid grid-cols-1 gap-3">
           <div className="border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
             <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
@@ -927,11 +992,11 @@ export default function ServerCaseBlueprint({
   const hddTelemetry = useMemo(() => extractDiskTelemetry(metrics, 0, "HDD"), [metrics]);
   const ssdTelemetry = useMemo(() => extractDiskTelemetry(metrics, 1, "SSD"), [metrics]);
   const caseFanATelemetry = useMemo(
-    () => extractFanTelemetry(metrics, 0, "Case Fan 1"),
+    () => extractFanTelemetry(metrics, 0, "Case Fan"),
     [metrics]
   );
-  const caseFanBTelemetry = useMemo(
-    () => extractFanTelemetry(metrics, 1, "Case Fan 2"),
+  const cpuFanTelemetry = useMemo(
+    () => extractFanTelemetry(metrics, 0, "CPU Fan"),
     [metrics]
   );
   const mobileSummaryRows = useMemo<MobileSummaryRow[]>(
@@ -961,7 +1026,7 @@ export default function ServerCaseBlueprint({
     () => [
       {
         key: "cpu",
-        title: "CPU",
+        title: buildPartTitle("CPU", metrics?.cpu?.model ?? null),
         statA: cpuTelemetry.primaryLabel,
         valueA: cpuTelemetry.primaryValue,
         statB: cpuTelemetry.secondaryLabel,
@@ -981,7 +1046,7 @@ export default function ServerCaseBlueprint({
       },
       {
         key: "gpu",
-        title: "GPU",
+        title: buildPartTitle("GPU", metrics?.gpu?.model ?? null),
         statA: gpuTelemetry.primaryLabel,
         valueA: gpuTelemetry.primaryValue,
         statB: gpuTelemetry.secondaryLabel,
@@ -1011,7 +1076,10 @@ export default function ServerCaseBlueprint({
       },
       {
         key: "caseFanA",
-        title: "Case Fan 1",
+        title: buildPartTitle(
+          "Case Fan",
+          getFanMetricByLabel(metrics, "case")?.model ?? null
+        ),
         statA: caseFanATelemetry.primaryLabel,
         valueA: caseFanATelemetry.primaryValue,
         statB: caseFanATelemetry.secondaryLabel,
@@ -1020,24 +1088,28 @@ export default function ServerCaseBlueprint({
         percent: caseFanATelemetry.percent,
       },
       {
-        key: "caseFanB",
-        title: "Case Fan 2",
-        statA: caseFanBTelemetry.primaryLabel,
-        valueA: caseFanBTelemetry.primaryValue,
-        statB: caseFanBTelemetry.secondaryLabel,
-        valueB: caseFanBTelemetry.secondaryValue,
-        load: formatPercent(caseFanBTelemetry.percent),
-        percent: caseFanBTelemetry.percent,
+        key: null,
+        title: buildPartTitle(
+          "CPU Fan",
+          getFanMetricByLabel(metrics, "cpu")?.model ?? null
+        ),
+        statA: cpuFanTelemetry.primaryLabel,
+        valueA: cpuFanTelemetry.primaryValue,
+        statB: cpuFanTelemetry.secondaryLabel,
+        valueB: cpuFanTelemetry.secondaryValue,
+        load: formatPercent(cpuFanTelemetry.percent),
+        percent: cpuFanTelemetry.percent,
       },
     ],
     [
+      metrics,
       cpuTelemetry,
       ramTelemetry,
       gpuTelemetry,
       hddTelemetry,
       ssdTelemetry,
       caseFanATelemetry,
-      caseFanBTelemetry,
+      cpuFanTelemetry,
     ]
   );
   const [panelPositions, setPanelPositions] = useState<Record<PanelKey, PanelPosition>>({
@@ -1732,9 +1804,9 @@ export default function ServerCaseBlueprint({
               continue;
             }
 
-            const liveSpeed =
-              Math.min(rpm / CASE_FAN_REFERENCE_RPM, 1.25) * CASE_FAN_MAX_SPIN_SPEED;
-            fan.rotation[config.axis] = baseRotation[config.axis] + spinTime * liveSpeed;
+            const liveAngularSpeed = rpm * RPM_TO_RAD_PER_SEC;
+            fan.rotation[config.axis] =
+              baseRotation[config.axis] + spinTime * liveAngularSpeed;
             continue;
           }
 
@@ -1801,7 +1873,13 @@ export default function ServerCaseBlueprint({
       for (const [name] of hoverMap) {
         const target = hoverTarget.get(name) ?? 0;
         const current = hoverCurrent.get(name) ?? 0;
-        hoverCurrent.set(name, current + (target - current) * 0.08);
+        if (target === 0 && current < 0.002) {
+          hoverCurrent.set(name, 0);
+          continue;
+        }
+
+        const smoothing = target === 0 ? 0.28 : 0.08;
+        hoverCurrent.set(name, current + (target - current) * smoothing);
       }
 
       controls.update();
@@ -1823,11 +1901,17 @@ export default function ServerCaseBlueprint({
         }
       }
 
+      let cpuHovered = false;
       let gpuHovered = false;
       let caseFanHovered = false;
 
       for (const [name] of hoverMap) {
         const hovered = hoveredNames.has(name);
+
+        if (CPU_PART_NAMES.includes(name)) {
+          cpuHovered ||= hovered;
+          continue;
+        }
 
         if (GPU_PART_NAMES.includes(name)) {
           gpuHovered ||= hovered;
@@ -1840,6 +1924,11 @@ export default function ServerCaseBlueprint({
         }
 
         hoverTarget.set(name, hovered ? HOVER_PARTS[name] ?? 0.05 : 0);
+      }
+
+      for (const cpuName of CPU_PART_NAMES) {
+        if (!hoverMap.has(cpuName)) continue;
+        hoverTarget.set(cpuName, cpuHovered ? HOVER_PARTS[cpuName] ?? 0.05 : 0);
       }
 
       for (const gpuName of GPU_PART_NAMES) {
@@ -2185,8 +2274,21 @@ export default function ServerCaseBlueprint({
 
   return (
     <section ref={sectionRef} className="relative w-full min-h-[270vh]">
-      <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden">
-        <div className="relative border-t border-brownBorder/70 bg-creamBg px-4 py-3 text-center text-xs uppercase tracking-wider text-brownMuted">
+      <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden relative">
+        <DesktopTelemetrySidebar
+          items={desktopSidebarItems}
+          activeKey={sidebarHoverKey}
+          onHoverChange={setSidebarHoverKey}
+          zoomTrackRef={zoomTrackRef}
+          zoomScaleFillRef={zoomScaleFillRef}
+          zoomIndicatorRef={zoomIndicatorRef}
+          scrollTrackRef={scrollTrackRef}
+          scrollProgressFillRef={scrollProgressFillRef}
+          scrollIndicatorRef={scrollIndicatorRef}
+          onZoomDragStart={startHudDrag("zoom", "x", false, zoomTrackRef)}
+          onScrollDragStart={startHudDrag("scroll", "x", false, scrollTrackRef)}
+        />
+        <div className="relative z-10 border-t border-brownBorder/70 bg-creamBg px-4 py-3 text-center text-xs uppercase tracking-wider text-brownMuted">
           <a href="https://evan-huang.dev" className="hover:underline">
             Evan
           </a>
@@ -2225,20 +2327,6 @@ export default function ServerCaseBlueprint({
             ref={overlayRef}
             className="pointer-events-none absolute inset-0 z-10"
           >
-            <DesktopTelemetrySidebar
-              items={desktopSidebarItems}
-              activeKey={sidebarHoverKey}
-              onHoverChange={setSidebarHoverKey}
-              zoomTrackRef={zoomTrackRef}
-              zoomScaleFillRef={zoomScaleFillRef}
-              zoomIndicatorRef={zoomIndicatorRef}
-              scrollTrackRef={scrollTrackRef}
-              scrollProgressFillRef={scrollProgressFillRef}
-              scrollIndicatorRef={scrollIndicatorRef}
-              onZoomDragStart={startHudDrag("zoom", "x", false, zoomTrackRef)}
-              onScrollDragStart={startHudDrag("scroll", "x", false, scrollTrackRef)}
-            />
-
             <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-20 flex items-center justify-between px-4 md:hidden">
               <div className="border border-[#4e3221] bg-[#f6ead1] px-2 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
                 <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36] [writing-mode:vertical-rl]">
