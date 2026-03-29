@@ -50,14 +50,43 @@ const HOVER_PARTS: Record<string, number> = {
   GPUBase: 0.035,
   GPUBase001: 0.035,
   GPUFan: 0.03,
+  HDD: 0.035,
+  SSD: 0.03,
+  CaseFan: 0.03,
+  CaseFan001: 0.03,
+};
+
+const HOVER_DIRECTIONS: Record<string, Vector3> = {
+  HDD: new Vector3(-1, 0, 0),
+  SSD: new Vector3(-1, 0, 0),
+  GPUBase: new Vector3(-1, 0, 0),
+  GPUBase001: new Vector3(-1, 0, 0),
+  GPUFan: new Vector3(-1, 0, 0),
+  CaseFan: new Vector3(-1, 0, 0),
+  CaseFan001: new Vector3(-1, 0, 0),
 };
 
 const RAM_PART_NAMES = ["RAM", "RAM001", "RAM002", "RAM003"];
 const CPU_PART_NAMES = ["CPU", "CPU001"];
 const MOTHERBOARD_PART_NAMES = ["MotherBoard"];
 const GPU_PART_NAMES = ["GPUBase", "GPUBase001", "GPUFan"];
-const GPU_FAN_NAMES = ["GPUFan"];
+const HDD_PART_NAMES = ["HDD"];
+const SSD_PART_NAMES = ["SSD"];
+const CASE_FAN_A_PART_NAMES = ["CaseFan"];
+const CASE_FAN_B_PART_NAMES = ["CaseFan001"];
+const CASE_FAN_HOVER_PART_NAMES = ["CaseFan", "CaseFan001"];
 const GPU_FAN_SPIN_SPEED = 8;
+const CASE_FAN_MAX_SPIN_SPEED = 9;
+const CASE_FAN_REFERENCE_RPM = 1400;
+
+const SPINNING_FAN_CONFIGS = [
+  { names: ["GPUFan"], axis: "y" as const, speed: GPU_FAN_SPIN_SPEED },
+  {
+    names: ["CaseFan", "CPUFan"],
+    axis: "x" as const,
+    speed: 0,
+  },
+];
 
 const DVD_PREROLL_DIST = 0.5;
 const DVD_TRAY_DIST = 0.08;
@@ -93,7 +122,14 @@ const PANEL_MARGIN = 24;
 const CONNECTOR_GAP = 20;
 const PANEL_REVEAL_DURATION = 0.1;
 
-type PanelKey = "cpu" | "ram" | "gpu";
+type PanelKey =
+  | "cpu"
+  | "ram"
+  | "gpu"
+  | "hdd"
+  | "ssd"
+  | "caseFanA"
+  | "caseFanB";
 type Point = { x: number; y: number };
 type PanelPosition = { x: number; y: number };
 type ScreenAnchor = { x: number; y: number; visible: boolean };
@@ -107,6 +143,10 @@ const PANEL_CONFIGS: PanelConfig[] = [
   { key: "cpu", partNames: CPU_PART_NAMES, revealStart: GROUP_2_START },
   { key: "ram", partNames: RAM_PART_NAMES, revealStart: GROUP_2_START },
   { key: "gpu", partNames: GPU_PART_NAMES, revealStart: GROUP_2_START },
+  { key: "hdd", partNames: HDD_PART_NAMES, revealStart: GROUP_2_START },
+  { key: "ssd", partNames: SSD_PART_NAMES, revealStart: GROUP_2_START },
+  { key: "caseFanA", partNames: CASE_FAN_A_PART_NAMES, revealStart: GROUP_2_START },
+  { key: "caseFanB", partNames: CASE_FAN_B_PART_NAMES, revealStart: GROUP_2_START },
 ];
 
 function clamp(value: number, min: number, max: number): number {
@@ -419,12 +459,56 @@ function formatTemperature(value: number | null | undefined): string {
   return `${value.toFixed(0)} C`;
 }
 
+function formatRpm(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `${Math.round(value)} RPM`;
+}
+
+function getCaseFanRpm(metrics: MetricsResponse | null): number | null {
+  const fans = metrics?.fans ?? [];
+  const preferredFan =
+    fans.find((fan) => {
+      const label = fan.label?.toLowerCase() ?? "";
+      return (
+        label.includes("motherboard") ||
+        label.includes("system") ||
+        label.includes("chassis") ||
+        label.includes("case")
+      );
+    }) ??
+    fans.find((fan) => {
+      const label = fan.label?.toLowerCase() ?? "";
+      return !label.includes("processor") && !label.includes("cpu");
+    }) ??
+    null;
+
+  const rpm = preferredFan?.rpm ?? null;
+  return typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0 ? rpm : null;
+}
+
 type PanelData = {
   title: string;
   primaryLabel: string;
   primaryValue: string;
   secondaryLabel: string;
   secondaryValue: string;
+  percent: number | null;
+};
+
+type MobileSummaryRow = {
+  label: string;
+  value: string;
+  aux?: string;
+};
+
+type SidebarTelemetryItem = {
+  key: PanelKey;
+  title: string;
+  statA: string;
+  valueA: string;
+  statB: string;
+  valueB: string;
+  load: string;
   percent: number | null;
 };
 
@@ -467,6 +551,43 @@ function extractGpuTelemetry(metrics: MetricsResponse | null): PanelData {
       metrics?.gpu?.total_gb ?? null
     ),
     percent: clampPercent(metrics?.gpu?.percent ?? null),
+  };
+}
+
+function extractDiskTelemetry(
+  metrics: MetricsResponse | null,
+  index: number,
+  title: string
+): PanelData {
+  const disk = metrics?.disks?.[index] ?? null;
+
+  return {
+    title,
+    primaryLabel: "Usage",
+    primaryValue: formatGigabytes(disk?.used_gb ?? null, disk?.total_gb ?? null),
+    secondaryLabel: "Free",
+    secondaryValue:
+      typeof disk?.free_gb === "number" && Number.isFinite(disk.free_gb)
+        ? `${disk.free_gb.toFixed(1)} GB`
+        : "—",
+    percent: clampPercent(disk?.percent ?? null),
+  };
+}
+
+function extractFanTelemetry(
+  metrics: MetricsResponse | null,
+  index: number,
+  title: string
+): PanelData {
+  const fan = metrics?.fans?.[index] ?? null;
+
+  return {
+    title,
+    primaryLabel: "Speed",
+    primaryValue: formatRpm(fan?.rpm ?? null),
+    secondaryLabel: "Controller",
+    secondaryValue: fan?.model?.trim() || fan?.label?.trim() || "—",
+    percent: clampPercent(fan?.percent ?? null),
   };
 }
 
@@ -552,6 +673,173 @@ function TelemetryWindow({
   );
 }
 
+function MobileSummaryWindow({
+  rows,
+}: {
+  rows: MobileSummaryRow[];
+}) {
+  return (
+    <div className="pointer-events-none absolute left-3 top-3 z-20 w-[170px] overflow-hidden border border-[#4e3221] bg-[#f6ead1] text-[#3a2418] shadow-[4px_4px_0_rgba(78,50,33,0.18)] md:hidden">
+      <div className="border-b border-[#4e3221] bg-[#ead9b7] px-2 py-1.5 text-[8px] uppercase tracking-[0.16em] text-[#3a2418]">
+        Evan&apos;s Server
+      </div>
+      <div className="grid grid-cols-1 gap-1 px-2 py-2">
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            className="border border-[#4e3221] bg-[#efe1c3] px-2 py-1.5"
+          >
+            <div className="flex items-center justify-between gap-2 text-[8px] uppercase tracking-[0.12em] text-[#6b4a36]">
+              <span>{row.label}</span>
+              {row.aux ? (
+                <span className="font-mono normal-case tracking-normal text-[#3a2418]">
+                  {row.aux}
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-1 font-mono text-[11px] leading-none tracking-tight text-[#3a2418]">
+              {row.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DesktopTelemetrySidebar({
+  items,
+  activeKey,
+  onHoverChange,
+  zoomTrackRef,
+  zoomScaleFillRef,
+  zoomIndicatorRef,
+  scrollTrackRef,
+  scrollProgressFillRef,
+  scrollIndicatorRef,
+  onZoomDragStart,
+  onScrollDragStart,
+}: {
+  items: SidebarTelemetryItem[];
+  activeKey: PanelKey | null;
+  onHoverChange: (key: PanelKey | null) => void;
+  zoomTrackRef: RefObject<HTMLDivElement>;
+  zoomScaleFillRef: RefObject<HTMLDivElement>;
+  zoomIndicatorRef: RefObject<HTMLDivElement>;
+  scrollTrackRef: RefObject<HTMLDivElement>;
+  scrollProgressFillRef: RefObject<HTMLDivElement>;
+  scrollIndicatorRef: RefObject<HTMLDivElement>;
+  onZoomDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onScrollDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div className="pointer-events-auto absolute left-4 top-4 z-20 hidden w-[240px] overflow-hidden border border-[#4e3221] bg-[#f6ead1] text-[#3a2418] shadow-[4px_4px_0_rgba(78,50,33,0.18)] md:block">
+      <div className="border-b border-[#4e3221] bg-[#ead9b7] px-3 py-2 text-[9px] uppercase tracking-[0.22em] text-[#3a2418]">
+        System Telemetry
+      </div>
+      <div className="max-h-[calc(100vh-9rem)] overflow-y-auto px-2 py-2">
+        {items.map((item) => {
+          const isActive = item.key === activeKey;
+
+          return (
+            <div
+              key={item.key}
+              className={[
+                "mb-2 border bg-[#efe1c3] px-2 py-2 transition-colors last:mb-0",
+                isActive
+                  ? "border-[#3a2418] bg-[#ead9b7]"
+                  : "border-[#4e3221] hover:bg-[#f1e3c6]",
+              ].join(" ")}
+              onPointerEnter={() => onHoverChange(item.key)}
+              onPointerLeave={() => onHoverChange(null)}
+            >
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="truncate text-[8px] uppercase tracking-[0.2em] text-[#3a2418]">
+                  {item.title}
+                </span>
+                <span className="font-mono text-[10px] text-[#6b4a36]">
+                  {item.load}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[8px] uppercase tracking-[0.12em] text-[#6b4a36]">
+                <span>{item.statA}</span>
+                <span className="truncate font-mono normal-case tracking-normal text-[#3a2418]">
+                  {item.valueA}
+                </span>
+                <span>{item.statB}</span>
+                <span className="truncate font-mono normal-case tracking-normal text-[#3a2418]">
+                  {item.valueB}
+                </span>
+              </div>
+
+              <div className="mt-2 h-1.5 border border-[#4e3221] bg-[#e7d7b4] p-[2px]">
+                <div
+                  className="h-full bg-[#6b4a36] transition-[width] duration-300"
+                  style={{ width: `${item.percent ?? 0}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="border-t border-[#4e3221] bg-[#ead9b7] px-2 py-2">
+        <div className="grid grid-cols-1 gap-3">
+          <div className="border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+            <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+              <span>Zoom</span>
+            </div>
+
+            <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+              <div
+                ref={zoomTrackRef}
+                className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
+                onPointerDown={onZoomDragStart}
+              >
+                <div
+                  ref={zoomScaleFillRef}
+                  className="h-full bg-[#6b4a36] transition-[width] duration-150"
+                  style={{ width: "0%" }}
+                />
+                <div
+                  ref={zoomIndicatorRef}
+                  className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                  style={{ left: "0%" }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="min-w-0 border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
+            <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
+              <span>Scroll</span>
+            </div>
+
+            <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
+              <div
+                ref={scrollTrackRef}
+                className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
+                onPointerDown={onScrollDragStart}
+              >
+                <div
+                  ref={scrollProgressFillRef}
+                  className="h-full bg-[#6b4a36] transition-[width] duration-150"
+                  style={{ width: "0%" }}
+                />
+                <div
+                  ref={scrollIndicatorRef}
+                  className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                  style={{ left: "0%" }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ServerCaseBlueprint({
   metrics,
 }: {
@@ -569,15 +857,31 @@ export default function ServerCaseBlueprint({
   const cpuPanelRef = useRef<HTMLDivElement>(null);
   const ramPanelRef = useRef<HTMLDivElement>(null);
   const gpuPanelRef = useRef<HTMLDivElement>(null);
+  const hddPanelRef = useRef<HTMLDivElement>(null);
+  const ssdPanelRef = useRef<HTMLDivElement>(null);
+  const caseFanAPanelRef = useRef<HTMLDivElement>(null);
+  const caseFanBPanelRef = useRef<HTMLDivElement>(null);
   const cpuShellRef = useRef<HTMLDivElement>(null);
   const ramShellRef = useRef<HTMLDivElement>(null);
   const gpuShellRef = useRef<HTMLDivElement>(null);
+  const hddShellRef = useRef<HTMLDivElement>(null);
+  const ssdShellRef = useRef<HTMLDivElement>(null);
+  const caseFanAShellRef = useRef<HTMLDivElement>(null);
+  const caseFanBShellRef = useRef<HTMLDivElement>(null);
   const cpuContentRef = useRef<HTMLDivElement>(null);
   const ramContentRef = useRef<HTMLDivElement>(null);
   const gpuContentRef = useRef<HTMLDivElement>(null);
+  const hddContentRef = useRef<HTMLDivElement>(null);
+  const ssdContentRef = useRef<HTMLDivElement>(null);
+  const caseFanAContentRef = useRef<HTMLDivElement>(null);
+  const caseFanBContentRef = useRef<HTMLDivElement>(null);
   const cpuPathRef = useRef<SVGPathElement>(null);
   const ramPathRef = useRef<SVGPathElement>(null);
   const gpuPathRef = useRef<SVGPathElement>(null);
+  const hddPathRef = useRef<SVGPathElement>(null);
+  const ssdPathRef = useRef<SVGPathElement>(null);
+  const caseFanAPathRef = useRef<SVGPathElement>(null);
+  const caseFanBPathRef = useRef<SVGPathElement>(null);
   const scrollTrackRef = useRef<HTMLDivElement>(null);
   const scrollProgressFillRef = useRef<HTMLDivElement>(null);
   const scrollIndicatorRef = useRef<HTMLDivElement>(null);
@@ -596,6 +900,9 @@ export default function ServerCaseBlueprint({
   const mobileZoomScaleLabelRef = useRef<HTMLSpanElement>(null);
   const currentProgressRef = useRef(0);
   const animationProgressRef = useRef(0);
+  const metricsRef = useRef<MetricsResponse | null>(metrics);
+  const sidebarHoverKeyRef = useRef<PanelKey | null>(null);
+  const syncSidebarHoverRef = useRef<() => void>(() => {});
   const setScrollProgressRef = useRef<(progress: number) => void>(() => {});
   const setZoomProgressRef = useRef<(progress: number) => void>(() => {});
   const dragStateRef = useRef<{
@@ -612,15 +919,145 @@ export default function ServerCaseBlueprint({
     track: HTMLDivElement | null;
   } | null>(null);
   const didInitPanelPositionsRef = useRef(false);
+  const [sidebarHoverKey, setSidebarHoverKey] = useState<PanelKey | null>(null);
 
   const cpuTelemetry = useMemo(() => extractCpuTelemetry(metrics), [metrics]);
   const ramTelemetry = useMemo(() => extractRamTelemetry(metrics), [metrics]);
   const gpuTelemetry = useMemo(() => extractGpuTelemetry(metrics), [metrics]);
+  const hddTelemetry = useMemo(() => extractDiskTelemetry(metrics, 0, "HDD"), [metrics]);
+  const ssdTelemetry = useMemo(() => extractDiskTelemetry(metrics, 1, "SSD"), [metrics]);
+  const caseFanATelemetry = useMemo(
+    () => extractFanTelemetry(metrics, 0, "Case Fan 1"),
+    [metrics]
+  );
+  const caseFanBTelemetry = useMemo(
+    () => extractFanTelemetry(metrics, 1, "Case Fan 2"),
+    [metrics]
+  );
+  const mobileSummaryRows = useMemo<MobileSummaryRow[]>(
+    () => [
+      {
+        label: "CPU",
+        value: formatPercent(clampPercent(metrics?.cpu?.percent ?? null)),
+        aux: formatTemperature(metrics?.cpu?.temperatures?.[0]?.celsius ?? null),
+      },
+      {
+        label: "RAM",
+        value: formatGigabytes(
+          metrics?.mem?.used_gb ?? null,
+          metrics?.mem?.total_gb ?? null
+        ),
+        aux: formatPercent(clampPercent(metrics?.mem?.percent ?? null)),
+      },
+      {
+        label: "GPU",
+        value: formatGpuTitle(metrics?.gpu?.model ?? null).replace("GPU • ", ""),
+        aux: formatTemperature(metrics?.gpu?.temperature_c ?? null),
+      },
+    ],
+    [metrics]
+  );
+  const desktopSidebarItems = useMemo<SidebarTelemetryItem[]>(
+    () => [
+      {
+        key: "cpu",
+        title: "CPU",
+        statA: cpuTelemetry.primaryLabel,
+        valueA: cpuTelemetry.primaryValue,
+        statB: cpuTelemetry.secondaryLabel,
+        valueB: cpuTelemetry.secondaryValue,
+        load: formatPercent(cpuTelemetry.percent),
+        percent: cpuTelemetry.percent,
+      },
+      {
+        key: "ram",
+        title: "RAM",
+        statA: ramTelemetry.primaryLabel,
+        valueA: ramTelemetry.primaryValue,
+        statB: ramTelemetry.secondaryLabel,
+        valueB: ramTelemetry.secondaryValue,
+        load: formatPercent(ramTelemetry.percent),
+        percent: ramTelemetry.percent,
+      },
+      {
+        key: "gpu",
+        title: "GPU",
+        statA: gpuTelemetry.primaryLabel,
+        valueA: gpuTelemetry.primaryValue,
+        statB: gpuTelemetry.secondaryLabel,
+        valueB: gpuTelemetry.secondaryValue,
+        load: formatPercent(gpuTelemetry.percent),
+        percent: gpuTelemetry.percent,
+      },
+      {
+        key: "hdd",
+        title: "HDD",
+        statA: hddTelemetry.primaryLabel,
+        valueA: hddTelemetry.primaryValue,
+        statB: hddTelemetry.secondaryLabel,
+        valueB: hddTelemetry.secondaryValue,
+        load: formatPercent(hddTelemetry.percent),
+        percent: hddTelemetry.percent,
+      },
+      {
+        key: "ssd",
+        title: "SSD",
+        statA: ssdTelemetry.primaryLabel,
+        valueA: ssdTelemetry.primaryValue,
+        statB: ssdTelemetry.secondaryLabel,
+        valueB: ssdTelemetry.secondaryValue,
+        load: formatPercent(ssdTelemetry.percent),
+        percent: ssdTelemetry.percent,
+      },
+      {
+        key: "caseFanA",
+        title: "Case Fan 1",
+        statA: caseFanATelemetry.primaryLabel,
+        valueA: caseFanATelemetry.primaryValue,
+        statB: caseFanATelemetry.secondaryLabel,
+        valueB: caseFanATelemetry.secondaryValue,
+        load: formatPercent(caseFanATelemetry.percent),
+        percent: caseFanATelemetry.percent,
+      },
+      {
+        key: "caseFanB",
+        title: "Case Fan 2",
+        statA: caseFanBTelemetry.primaryLabel,
+        valueA: caseFanBTelemetry.primaryValue,
+        statB: caseFanBTelemetry.secondaryLabel,
+        valueB: caseFanBTelemetry.secondaryValue,
+        load: formatPercent(caseFanBTelemetry.percent),
+        percent: caseFanBTelemetry.percent,
+      },
+    ],
+    [
+      cpuTelemetry,
+      ramTelemetry,
+      gpuTelemetry,
+      hddTelemetry,
+      ssdTelemetry,
+      caseFanATelemetry,
+      caseFanBTelemetry,
+    ]
+  );
   const [panelPositions, setPanelPositions] = useState<Record<PanelKey, PanelPosition>>({
     cpu: { x: PANEL_MARGIN, y: 96 },
     ram: { x: PANEL_MARGIN, y: 96 },
     gpu: { x: PANEL_MARGIN, y: 96 },
+    hdd: { x: PANEL_MARGIN, y: 96 },
+    ssd: { x: PANEL_MARGIN, y: 96 },
+    caseFanA: { x: PANEL_MARGIN, y: 96 },
+    caseFanB: { x: PANEL_MARGIN, y: 96 },
   });
+
+  useEffect(() => {
+    metricsRef.current = metrics;
+  }, [metrics]);
+
+  useEffect(() => {
+    sidebarHoverKeyRef.current = sidebarHoverKey;
+    syncSidebarHoverRef.current();
+  }, [sidebarHoverKey]);
 
   useEffect(() => {
     return () => {
@@ -658,6 +1095,12 @@ export default function ServerCaseBlueprint({
         const cpuHeight = cpuPanelRef.current?.getBoundingClientRect().height ?? 280;
         const ramHeight = ramPanelRef.current?.getBoundingClientRect().height ?? 280;
         const gpuHeight = gpuPanelRef.current?.getBoundingClientRect().height ?? 280;
+        const hddHeight = hddPanelRef.current?.getBoundingClientRect().height ?? 280;
+        const ssdHeight = ssdPanelRef.current?.getBoundingClientRect().height ?? 280;
+        const caseFanAHeight =
+          caseFanAPanelRef.current?.getBoundingClientRect().height ?? 280;
+        const caseFanBHeight =
+          caseFanBPanelRef.current?.getBoundingClientRect().height ?? 280;
 
         const nextCpu = {
           x: clamp(current.cpu.x, PANEL_MARGIN, Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)),
@@ -696,6 +1139,71 @@ export default function ServerCaseBlueprint({
               )
             : desiredGpuY,
         };
+        const desiredBottomX = Math.max(PANEL_MARGIN, desiredRamX);
+        const nextHdd = {
+          x: didInitPanelPositionsRef.current
+            ? clamp(
+                current.hdd.x,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)
+              )
+            : PANEL_MARGIN,
+          y: didInitPanelPositionsRef.current
+            ? clamp(
+                current.hdd.y,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.height - hddHeight - PANEL_MARGIN)
+              )
+            : Math.max(PANEL_MARGIN, overlayRect.height - hddHeight - 164),
+        };
+        const nextSsd = {
+          x: didInitPanelPositionsRef.current
+            ? clamp(
+                current.ssd.x,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)
+              )
+            : PANEL_MARGIN,
+          y: didInitPanelPositionsRef.current
+            ? clamp(
+                current.ssd.y,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.height - ssdHeight - PANEL_MARGIN)
+              )
+            : Math.max(PANEL_MARGIN, overlayRect.height - ssdHeight - 44),
+        };
+        const nextCaseFanA = {
+          x: didInitPanelPositionsRef.current
+            ? clamp(
+                current.caseFanA.x,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)
+              )
+            : desiredBottomX,
+          y: didInitPanelPositionsRef.current
+            ? clamp(
+                current.caseFanA.y,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.height - caseFanAHeight - PANEL_MARGIN)
+              )
+            : Math.max(PANEL_MARGIN, overlayRect.height - caseFanAHeight - 164),
+        };
+        const nextCaseFanB = {
+          x: didInitPanelPositionsRef.current
+            ? clamp(
+                current.caseFanB.x,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.width - PANEL_WIDTH - PANEL_MARGIN)
+              )
+            : desiredBottomX,
+          y: didInitPanelPositionsRef.current
+            ? clamp(
+                current.caseFanB.y,
+                PANEL_MARGIN,
+                Math.max(PANEL_MARGIN, overlayRect.height - caseFanBHeight - PANEL_MARGIN)
+              )
+            : Math.max(PANEL_MARGIN, overlayRect.height - caseFanBHeight - 44),
+        };
 
         const nextCpuAdjusted = didInitPanelPositionsRef.current
           ? nextCpu
@@ -705,7 +1213,15 @@ export default function ServerCaseBlueprint({
             };
 
         didInitPanelPositionsRef.current = true;
-        return { cpu: nextCpuAdjusted, ram: nextRam, gpu: nextGpu };
+        return {
+          cpu: nextCpuAdjusted,
+          ram: nextRam,
+          gpu: nextGpu,
+          hdd: nextHdd,
+          ssd: nextSsd,
+          caseFanA: nextCaseFanA,
+          caseFanB: nextCaseFanB,
+        };
       });
     };
 
@@ -729,7 +1245,15 @@ export default function ServerCaseBlueprint({
           ? cpuPanelRef.current
           : dragState.panel === "ram"
             ? ramPanelRef.current
-            : gpuPanelRef.current;
+            : dragState.panel === "gpu"
+              ? gpuPanelRef.current
+              : dragState.panel === "hdd"
+                ? hddPanelRef.current
+                : dragState.panel === "ssd"
+                  ? ssdPanelRef.current
+                  : dragState.panel === "caseFanA"
+                    ? caseFanAPanelRef.current
+                    : caseFanBPanelRef.current;
       const panelHeight = panelRef?.getBoundingClientRect().height ?? 280;
 
       const nextX = clamp(
@@ -854,7 +1378,10 @@ export default function ServerCaseBlueprint({
     const hoverCurrent = new Map<string, number>();
     const hoverBaseWorld = new Map<string, Vector3>();
     const telemetryAnchorWorld = new Map<PanelKey, Vector3>();
-    const gpuFanBaseRotation = new Map<string, number>();
+    const spinningFanBaseRotations = new Map<
+      string,
+      { x: number; y: number; z: number }
+    >();
 
     let maxDistance = 0.45;
     let rootGroup: Group | null = null;
@@ -958,10 +1485,9 @@ export default function ServerCaseBlueprint({
 
       path.style.opacity = revealProgress > 0 && anchor.visible ? "1" : "0";
 
-      const isVisible = revealProgress > 0;
-      panel.style.opacity = `${clamp(revealProgress * 1.25, 0, 1)}`;
-      panel.style.visibility = isVisible ? "visible" : "hidden";
-      panel.style.pointerEvents = revealProgress >= 0.99 ? "auto" : "none";
+      panel.style.opacity = "1";
+      panel.style.visibility = "visible";
+      panel.style.pointerEvents = "auto";
 
       if (shell) {
         const originX = endPoint
@@ -973,29 +1499,25 @@ export default function ServerCaseBlueprint({
 
         shell.style.setProperty("--panel-origin-x", originX);
         shell.style.setProperty("--panel-origin-y", originY);
-        shell.style.transform = `scale(${0.92 + shellProgress * 0.08})`;
-        shell.style.opacity = `${shellProgress}`;
+        shell.style.transform = "scale(1)";
+        shell.style.opacity = "1";
       }
 
       if (content) {
-        content.style.opacity = `${contentProgress}`;
-        content.style.transform = `translateY(${(1 - contentProgress) * 8}px)`;
+        content.style.opacity = "1";
+        content.style.transform = "translateY(0px)";
       }
     };
 
     const updateHud = () => {
       const scrollFill = scrollProgressFillRef.current;
       const scrollIndicator = scrollIndicatorRef.current;
-      const scrollLabel = scrollProgressLabelRef.current;
       const mobileScrollFill = mobileScrollProgressFillRef.current;
       const mobileScrollIndicator = mobileScrollIndicatorRef.current;
-      const mobileScrollLabel = mobileScrollProgressLabelRef.current;
       const zoomFill = zoomScaleFillRef.current;
       const zoomIndicator = zoomIndicatorRef.current;
-      const zoomLabel = zoomScaleLabelRef.current;
       const mobileZoomFill = mobileZoomScaleFillRef.current;
       const mobileZoomIndicator = mobileZoomIndicatorRef.current;
-      const mobileZoomLabel = mobileZoomScaleLabelRef.current;
 
       if (scrollFill) {
         scrollFill.style.width = `${currentProgressRef.current * 100}%`;
@@ -1003,10 +1525,6 @@ export default function ServerCaseBlueprint({
 
       if (scrollIndicator) {
         scrollIndicator.style.left = `${currentProgressRef.current * 100}%`;
-      }
-
-      if (scrollLabel) {
-        scrollLabel.textContent = `${Math.round(currentProgressRef.current * 100)}%`;
       }
 
       if (mobileScrollFill) {
@@ -1017,24 +1535,16 @@ export default function ServerCaseBlueprint({
         mobileScrollIndicator.style.bottom = `${currentProgressRef.current * 100}%`;
       }
 
-      if (mobileScrollLabel) {
-        mobileScrollLabel.textContent = `${Math.round(currentProgressRef.current * 100)}%`;
-      }
-
       const zoomRange = Math.max(0.0001, controls.maxDistance - controls.minDistance);
       const zoomDistance = camera.position.distanceTo(controls.target);
       const zoomProgress = clamp01((controls.maxDistance - zoomDistance) / zoomRange);
 
       if (zoomFill) {
-        zoomFill.style.height = `${zoomProgress * 100}%`;
+        zoomFill.style.width = `${zoomProgress * 100}%`;
       }
 
       if (zoomIndicator) {
-        zoomIndicator.style.bottom = `${zoomProgress * 100}%`;
-      }
-
-      if (zoomLabel) {
-        zoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`;
+        zoomIndicator.style.left = `${zoomProgress * 100}%`;
       }
 
       if (mobileZoomFill) {
@@ -1045,9 +1555,6 @@ export default function ServerCaseBlueprint({
         mobileZoomIndicator.style.bottom = `${zoomProgress * 100}%`;
       }
 
-      if (mobileZoomLabel) {
-        mobileZoomLabel.textContent = `${Math.round(zoomProgress * 100)}%`;
-      }
     };
 
     const updateTelemetryOverlay = () => {
@@ -1055,21 +1562,37 @@ export default function ServerCaseBlueprint({
         cpu: cpuPanelRef.current,
         ram: ramPanelRef.current,
         gpu: gpuPanelRef.current,
+        hdd: hddPanelRef.current,
+        ssd: ssdPanelRef.current,
+        caseFanA: caseFanAPanelRef.current,
+        caseFanB: caseFanBPanelRef.current,
       };
       const shellRefs: Record<PanelKey, HTMLDivElement | null> = {
         cpu: cpuShellRef.current,
         ram: ramShellRef.current,
         gpu: gpuShellRef.current,
+        hdd: hddShellRef.current,
+        ssd: ssdShellRef.current,
+        caseFanA: caseFanAShellRef.current,
+        caseFanB: caseFanBShellRef.current,
       };
       const contentRefs: Record<PanelKey, HTMLDivElement | null> = {
         cpu: cpuContentRef.current,
         ram: ramContentRef.current,
         gpu: gpuContentRef.current,
+        hdd: hddContentRef.current,
+        ssd: ssdContentRef.current,
+        caseFanA: caseFanAContentRef.current,
+        caseFanB: caseFanBContentRef.current,
       };
       const pathRefs: Record<PanelKey, SVGPathElement | null> = {
         cpu: cpuPathRef.current,
         ram: ramPathRef.current,
         gpu: gpuPathRef.current,
+        hdd: hddPathRef.current,
+        ssd: ssdPathRef.current,
+        caseFanA: caseFanAPathRef.current,
+        caseFanB: caseFanBPathRef.current,
       };
 
       for (const panelConfig of PANEL_CONFIGS) {
@@ -1179,7 +1702,8 @@ export default function ServerCaseBlueprint({
         if (!base || !obj.parent) continue;
 
         const curOffset = hoverCurrent.get(name) ?? 0;
-        const targetWorld = base.clone().addScaledVector(WORLD_UP, curOffset);
+        const hoverDirection = HOVER_DIRECTIONS[name] ?? WORLD_UP;
+        const targetWorld = base.clone().addScaledVector(hoverDirection, curOffset);
         const localPos = targetWorld.clone();
         obj.parent.worldToLocal(localPos);
         obj.position.copy(localPos);
@@ -1189,12 +1713,33 @@ export default function ServerCaseBlueprint({
       }
 
       const spinTime = performance.now() * 0.001;
-      for (const fanName of GPU_FAN_NAMES) {
-        const fan = hoverMap.get(fanName) ?? rootGroup.getObjectByName(fanName);
-        if (!fan) continue;
+      for (const config of SPINNING_FAN_CONFIGS) {
+        for (const fanName of config.names) {
+          const fan = hoverMap.get(fanName) ?? rootGroup.getObjectByName(fanName);
+          if (!fan) continue;
 
-        const baseRotation = gpuFanBaseRotation.get(fanName) ?? 0;
-        fan.rotation.y = baseRotation + spinTime * GPU_FAN_SPIN_SPEED;
+          const baseRotation = spinningFanBaseRotations.get(fanName) ?? {
+            x: fan.rotation.x,
+            y: fan.rotation.y,
+            z: fan.rotation.z,
+          };
+
+          fan.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
+
+          if (config.axis === "x") {
+            const rpm = getCaseFanRpm(metricsRef.current);
+            if (!rpm) {
+              continue;
+            }
+
+            const liveSpeed =
+              Math.min(rpm / CASE_FAN_REFERENCE_RPM, 1.25) * CASE_FAN_MAX_SPIN_SPEED;
+            fan.rotation[config.axis] = baseRotation[config.axis] + spinTime * liveSpeed;
+            continue;
+          }
+
+          fan.rotation[config.axis] = baseRotation[config.axis] + spinTime * config.speed;
+        }
       }
     };
 
@@ -1266,13 +1811,55 @@ export default function ServerCaseBlueprint({
       raf = requestAnimationFrame(loop);
     };
 
+    const setHoverTargets = (hoveredNames: Set<string>) => {
+      const sidebarKey = sidebarHoverKeyRef.current;
+      const sidebarConfig = sidebarKey
+        ? PANEL_CONFIGS.find((config) => config.key === sidebarKey)
+        : null;
+
+      if (sidebarConfig) {
+        for (const partName of sidebarConfig.partNames) {
+          hoveredNames.add(partName);
+        }
+      }
+
+      let gpuHovered = false;
+      let caseFanHovered = false;
+
+      for (const [name] of hoverMap) {
+        const hovered = hoveredNames.has(name);
+
+        if (GPU_PART_NAMES.includes(name)) {
+          gpuHovered ||= hovered;
+          continue;
+        }
+
+        if (CASE_FAN_HOVER_PART_NAMES.includes(name)) {
+          caseFanHovered ||= hovered;
+          continue;
+        }
+
+        hoverTarget.set(name, hovered ? HOVER_PARTS[name] ?? 0.05 : 0);
+      }
+
+      for (const gpuName of GPU_PART_NAMES) {
+        if (!hoverMap.has(gpuName)) continue;
+        hoverTarget.set(gpuName, gpuHovered ? HOVER_PARTS[gpuName] ?? 0.05 : 0);
+      }
+
+      for (const fanName of CASE_FAN_HOVER_PART_NAMES) {
+        if (!hoverMap.has(fanName)) continue;
+        hoverTarget.set(fanName, caseFanHovered ? HOVER_PARTS[fanName] ?? 0.05 : 0);
+      }
+    };
+
     const onMouseMove = (e: MouseEvent) => {
       if (!rootGroup || hoverMap.size === 0) return;
 
       const rect = renderer.domElement.getBoundingClientRect();
       const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const ny = ((e.clientY - rect.top) / rect.height) * -2 + 1;
-      let gpuHovered = false;
+      const hoveredNames = new Set<string>();
 
       for (const [name, obj] of hoverMap) {
         const wp = new Vector3();
@@ -1289,18 +1876,16 @@ export default function ServerCaseBlueprint({
         const ndcY = (sy / renderer.domElement.height) * -2 + 1;
         const hovered = Math.hypot(nx - ndcX, ny - ndcY) < 0.12;
 
-        if (GPU_PART_NAMES.includes(name)) {
-          gpuHovered ||= hovered;
-          continue;
+        if (hovered) {
+          hoveredNames.add(name);
         }
-
-        hoverTarget.set(name, hovered ? HOVER_PARTS[name] ?? 0.05 : 0);
       }
 
-      for (const gpuName of GPU_PART_NAMES) {
-        if (!hoverMap.has(gpuName)) continue;
-        hoverTarget.set(gpuName, gpuHovered ? HOVER_PARTS[gpuName] ?? 0.05 : 0);
-      }
+      setHoverTargets(hoveredNames);
+    };
+
+    syncSidebarHoverRef.current = () => {
+      setHoverTargets(new Set<string>());
     };
 
     const loader = new GLTFLoader();
@@ -1431,10 +2016,17 @@ export default function ServerCaseBlueprint({
         hoverCurrent.set(name, 0);
       }
 
-      for (const fanName of GPU_FAN_NAMES) {
-        const fan = hoverMap.get(fanName) ?? rootGroup.getObjectByName(fanName);
-        if (!fan) continue;
-        gpuFanBaseRotation.set(fanName, fan.rotation.y);
+      for (const config of SPINNING_FAN_CONFIGS) {
+        for (const fanName of config.names) {
+          const fan = hoverMap.get(fanName) ?? rootGroup.getObjectByName(fanName);
+          if (!fan) continue;
+
+          spinningFanBaseRotations.set(fanName, {
+            x: fan.rotation.x,
+            y: fan.rotation.y,
+            z: fan.rotation.z,
+          });
+        }
       }
 
       for (const panelConfig of PANEL_CONFIGS) {
@@ -1459,13 +2051,12 @@ export default function ServerCaseBlueprint({
     window.addEventListener("resize", resize);
     renderer.domElement.addEventListener("mousemove", onMouseMove);
     renderer.domElement.addEventListener("mouseleave", () => {
-      for (const [name] of hoverMap) {
-        hoverTarget.set(name, 0);
-      }
+      setHoverTargets(new Set<string>());
     });
 
     return () => {
       disposed = true;
+      syncSidebarHoverRef.current = () => {};
       setScrollProgressRef.current = () => {};
       setZoomProgressRef.current = () => {};
       cancelAnimationFrame(raf);
@@ -1490,7 +2081,15 @@ export default function ServerCaseBlueprint({
           ? cpuPanelRef.current
           : panel === "ram"
             ? ramPanelRef.current
-            : gpuPanelRef.current;
+            : panel === "gpu"
+              ? gpuPanelRef.current
+              : panel === "hdd"
+                ? hddPanelRef.current
+                : panel === "ssd"
+                  ? ssdPanelRef.current
+                  : panel === "caseFanA"
+                    ? caseFanAPanelRef.current
+                    : caseFanBPanelRef.current;
       if (!overlay || !panelElement) return;
 
       const panelRect = panelElement.getBoundingClientRect();
@@ -1626,99 +2225,23 @@ export default function ServerCaseBlueprint({
             ref={overlayRef}
             className="pointer-events-none absolute inset-0 z-10"
           >
-            <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
-              <path
-                ref={cpuPathRef}
-                fill="none"
-                stroke="#3a2418"
-                strokeWidth="2"
-                opacity="0"
-              />
-              <path
-                ref={ramPathRef}
-                fill="none"
-                stroke="#3a2418"
-                strokeWidth="2"
-                opacity="0"
-              />
-              <path
-                ref={gpuPathRef}
-                fill="none"
-                stroke="#3a2418"
-                strokeWidth="2"
-                opacity="0"
-              />
-            </svg>
-
-            <div className="pointer-events-none absolute bottom-6 left-6 z-20 hidden items-end gap-4 text-[#3a2418] md:flex">
-              <div className="border border-[#4e3221] bg-[#f6ead1] px-2 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                <div className="flex items-start gap-2">
-                  <div className="flex h-40 w-4 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
-                  <div
-                    ref={zoomTrackRef}
-                    className="pointer-events-auto relative h-full w-full cursor-pointer overflow-visible"
-                    onPointerDown={startHudDrag("zoom", "y", true, zoomTrackRef)}
-                  >
-                    <div
-                      ref={zoomScaleFillRef}
-                      className="absolute bottom-0 left-0 w-full bg-[#6b4a36] transition-[height] duration-150"
-                      style={{ height: "0%" }}
-                    />
-                    <div
-                      ref={zoomIndicatorRef}
-                      className="absolute left-1/2 h-[3px] w-[calc(100%+8px)] -translate-x-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[bottom] duration-150"
-                      style={{ bottom: "0%" }}
-                    />
-                  </div>
-                </div>
-
-                  <div className="flex h-40 flex-col justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
-                    <span className="[writing-mode:vertical-rl]">Zoom</span>
-                    <span
-                      ref={zoomScaleLabelRef}
-                      className="font-mono tracking-normal text-[#3a2418] [writing-mode:vertical-rl]"
-                    >
-                      0%
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="min-w-[220px] border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
-                  <span>Scroll</span>
-                  <span ref={scrollProgressLabelRef} className="font-mono text-[#3a2418]">
-                    0%
-                  </span>
-                </div>
-
-                <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
-                  <div
-                    ref={scrollTrackRef}
-                    className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
-                    onPointerDown={startHudDrag("scroll", "x", false, scrollTrackRef)}
-                  >
-                    <div
-                      ref={scrollProgressFillRef}
-                      className="h-full bg-[#6b4a36] transition-[width] duration-150"
-                      style={{ width: "0%" }}
-                    />
-                    <div
-                      ref={scrollIndicatorRef}
-                      className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
-                      style={{ left: "0%" }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
+            <DesktopTelemetrySidebar
+              items={desktopSidebarItems}
+              activeKey={sidebarHoverKey}
+              onHoverChange={setSidebarHoverKey}
+              zoomTrackRef={zoomTrackRef}
+              zoomScaleFillRef={zoomScaleFillRef}
+              zoomIndicatorRef={zoomIndicatorRef}
+              scrollTrackRef={scrollTrackRef}
+              scrollProgressFillRef={scrollProgressFillRef}
+              scrollIndicatorRef={scrollIndicatorRef}
+              onZoomDragStart={startHudDrag("zoom", "x", false, zoomTrackRef)}
+              onScrollDragStart={startHudDrag("scroll", "x", false, scrollTrackRef)}
+            />
 
             <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-20 flex items-center justify-between px-4 md:hidden">
               <div className="border border-[#4e3221] bg-[#f6ead1] px-2 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36] [writing-mode:vertical-rl]">
-                  <span ref={mobileZoomScaleLabelRef} className="font-mono text-[#3a2418]">
-                    0%
-                  </span>
+                <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36] [writing-mode:vertical-rl]">
                   <span>Zoom</span>
                 </div>
                 <div className="flex h-40 w-4 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
@@ -1742,11 +2265,8 @@ export default function ServerCaseBlueprint({
               </div>
 
               <div className="border border-[#4e3221] bg-[#f6ead1] px-2 py-3 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
-                <div className="mb-2 flex items-center justify-between text-[8px] uppercase tracking-[0.24em] text-[#6b4a36] [writing-mode:vertical-rl]">
+                <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36] [writing-mode:vertical-rl]">
                   <span>Scroll</span>
-                  <span ref={mobileScrollProgressLabelRef} className="font-mono text-[#3a2418]">
-                    0%
-                  </span>
                 </div>
                 <div className="flex h-40 w-4 items-end border border-[#4e3221] bg-[#efe1c3] p-[3px]">
                   <div
@@ -1769,32 +2289,7 @@ export default function ServerCaseBlueprint({
               </div>
             </div>
 
-            <TelemetryWindow
-              data={cpuTelemetry}
-              innerRef={cpuPanelRef}
-              shellRef={cpuShellRef}
-              contentRef={cpuContentRef}
-              position={panelPositions.cpu}
-              onDragStart={startPanelDrag("cpu")}
-            />
-
-            <TelemetryWindow
-              data={ramTelemetry}
-              innerRef={ramPanelRef}
-              shellRef={ramShellRef}
-              contentRef={ramContentRef}
-              position={panelPositions.ram}
-              onDragStart={startPanelDrag("ram")}
-            />
-
-            <TelemetryWindow
-              data={gpuTelemetry}
-              innerRef={gpuPanelRef}
-              shellRef={gpuShellRef}
-              contentRef={gpuContentRef}
-              position={panelPositions.gpu}
-              onDragStart={startPanelDrag("gpu")}
-            />
+            <MobileSummaryWindow rows={mobileSummaryRows} />
           </div>
         </div>
       </div>

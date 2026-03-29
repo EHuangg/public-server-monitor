@@ -13,12 +13,18 @@ export type MinecraftStatus = {
   latency_ms: number;
 };
 
+export type TemperatureMetric = {
+  label: string;
+  celsius: number;
+};
+
 export type CpuMetric = {
   percent: number;
   model?: string | null;
   cores_physical?: number | null;
   cores_logical?: number | null;
   frequency_mhz?: number | null;
+  temperatures?: TemperatureMetric[] | null;
 };
 
 export type MemoryMetric = {
@@ -45,11 +51,20 @@ export type FanMetric = {
   model?: string | null;
 };
 
+export type DiskMetric = {
+  label: string;
+  total_gb?: number | null;
+  used_gb?: number | null;
+  free_gb?: number | null;
+  percent?: number | null;
+};
+
 export type MetricsResponse = {
   cpu: CpuMetric;
   mem: MemoryMetric;
   gpu?: GpuMetric | null;
   fans: FanMetric[];
+  disks?: DiskMetric[] | null;
   uptime_seconds: number;
   docker: DockerContainer[];
   minecraft?: MinecraftStatus | null;
