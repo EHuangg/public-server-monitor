@@ -918,6 +918,8 @@ function DesktopTelemetrySidebar({
   items,
   activeKey,
   highlightHex,
+  headerStatus,
+  headerRefresh,
   onHoverChange,
   zoomTrackRef,
   zoomScaleFillRef,
@@ -931,6 +933,8 @@ function DesktopTelemetrySidebar({
   items: SidebarTelemetryItem[];
   activeKey: PanelKey | null;
   highlightHex: string;
+  headerStatus: string;
+  headerRefresh: string;
   onHoverChange: (key: PanelKey | null) => void;
   zoomTrackRef: RefObject<HTMLDivElement>;
   zoomScaleFillRef: RefObject<HTMLDivElement>;
@@ -944,8 +948,16 @@ function DesktopTelemetrySidebar({
   return (
     <>
       <div className="pointer-events-auto absolute inset-y-0 left-0 z-30 hidden w-[340px] overflow-hidden border-r border-[#4e3221] bg-[#f6ead1] text-[#3a2418] shadow-[4px_0_0_rgba(78,50,33,0.18)] md:flex md:flex-col">
-        <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-4 text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
-          System Telemetry
+        <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-3 text-[#3a2418]">
+          <div className="flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.22em]">
+            <span>{headerStatus}</span>
+          </div>
+          <div className="mt-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-[#6b4a36]">
+            <span>Last Refresh</span>
+            <span className="font-mono text-[15px] normal-case leading-none tracking-tight text-[#3a2418]">
+              {headerRefresh}
+            </span>
+          </div>
         </div>
       <div className="sidebar-scroll-hidden flex-1 overflow-y-auto px-0 py-0">
         {items.map((item) => {
@@ -1179,17 +1191,28 @@ export default function ServerCaseBlueprint({
     ],
     [metrics]
   );
+  const sidebarHeaderStatus = useMemo(
+    () =>
+      `Uptime : ${
+        isSystemDown(metrics)
+          ? "system down"
+          : formatUptime(metrics?.uptime_seconds ?? null)
+      }`,
+    [metrics]
+  );
+  const sidebarHeaderRefresh = useMemo(
+    () => formatLastRefresh(metrics?.last_updated ?? null),
+    [metrics]
+  );
   const highlightHex = useMemo(() => getBlueprintHighlightHex(metrics), [metrics]);
   const desktopSidebarItems = useMemo<SidebarTelemetryItem[]>(
     () => [
       {
         key: "cpu",
         title: buildPartTitle("CPU", metrics?.cpu?.model ?? null),
-        statA: cpuTelemetry.primaryLabel,
-        valueA: cpuTelemetry.primaryValue,
-        statB: cpuTelemetry.secondaryLabel,
-        valueB: cpuTelemetry.secondaryValue,
-        load: cpuTelemetry.percent != null ? formatPercent(cpuTelemetry.percent) : undefined,
+        statA: "Usage",
+        valueA: formatPercent(cpuTelemetry.percent),
+        load: undefined,
         percent: cpuTelemetry.percent,
       },
       {
@@ -2586,6 +2609,8 @@ export default function ServerCaseBlueprint({
           items={desktopSidebarItems}
           activeKey={sidebarHoverKey ?? modelHoverKey}
           highlightHex={highlightHex}
+          headerStatus={sidebarHeaderStatus}
+          headerRefresh={sidebarHeaderRefresh}
           onHoverChange={setSidebarHoverKey}
           zoomTrackRef={zoomTrackRef}
           zoomScaleFillRef={zoomScaleFillRef}
