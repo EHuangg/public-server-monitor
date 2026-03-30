@@ -810,118 +810,120 @@ function DesktopTelemetrySidebar({
   onScrollDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
 }) {
   return (
-    <div className="pointer-events-auto absolute inset-y-0 left-0 z-30 hidden w-[340px] overflow-hidden border-r border-[#4e3221] bg-[#f6ead1] text-[#3a2418] shadow-[4px_0_0_rgba(78,50,33,0.18)] md:block">
-      <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-4 text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
-        System Telemetry
-      </div>
-      <div className="h-[calc(100%-11.5rem)] overflow-y-auto px-0 py-0">
+    <>
+      <div className="pointer-events-auto absolute inset-y-0 left-0 z-30 hidden w-[340px] overflow-hidden border-r border-[#4e3221] bg-[#f6ead1] text-[#3a2418] shadow-[4px_0_0_rgba(78,50,33,0.18)] md:flex md:flex-col">
+        <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-4 text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
+          System Telemetry
+        </div>
+      <div className="retro-sidebar-scroll flex-1 overflow-y-auto px-0 py-0">
         {items.map((item) => {
-          const isActive = item.key != null && item.key === activeKey;
+            const isActive = item.key != null && item.key === activeKey;
 
-          return (
-            <div
+            return (
+              <div
               key={`${item.key ?? "static"}-${item.title}`}
               className={[
-                "border-b px-4 py-3 transition-colors last:border-b-0",
+                "border-b px-4 py-2.5 transition-colors",
                 isActive
                   ? "border-[#4e3221] bg-[#d9eac7]"
                   : "border-[#4e3221] bg-[#f6ead1] hover:bg-[#efe1c3]",
               ].join(" ")}
-              onPointerEnter={() => onHoverChange(item.key)}
-              onPointerLeave={() => onHoverChange(null)}
-            >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="truncate text-[15px] uppercase tracking-[0.14em] text-[#3a2418]">
-                  {item.title}
-                </span>
-                {item.load ? (
-                  <span className="font-mono text-[14px] text-[#6b4a36]">
-                    {item.load}
+                onPointerEnter={() => onHoverChange(item.key)}
+                onPointerLeave={() => onHoverChange(null)}
+              >
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="truncate text-[15px] uppercase tracking-[0.14em] text-[#3a2418]">
+                    {item.title}
                   </span>
-                ) : null}
-              </div>
-
-              <div className="grid grid-cols-[112px_1fr] gap-x-3 gap-y-2 text-[11px] uppercase tracking-[0.1em] text-[#6b4a36]">
-                <span>{item.statA}</span>
-                <span className="truncate font-mono text-[15px] normal-case tracking-normal text-[#3a2418]">
-                  {item.valueA}
-                </span>
-                {item.statB && item.valueB ? (
-                  <>
-                    <span>{item.statB}</span>
-                    <span className="truncate font-mono text-[15px] normal-case tracking-normal text-[#3a2418]">
-                      {item.valueB}
+                  {item.load ? (
+                    <span className="font-mono text-[14px] text-[#6b4a36]">
+                      {item.load}
                     </span>
-                  </>
+                  ) : null}
+                </div>
+
+                <div className="grid grid-cols-[98px_1fr] gap-x-2 gap-y-1 text-[11px] uppercase tracking-[0.08em] text-[#6b4a36]">
+                  <span>{item.statA}</span>
+                  <span className="truncate font-mono text-[15px] normal-case tracking-normal text-[#3a2418]">
+                    {item.valueA}
+                  </span>
+                  {item.statB && item.valueB ? (
+                    <>
+                      <span>{item.statB}</span>
+                      <span className="truncate font-mono text-[15px] normal-case tracking-normal text-[#3a2418]">
+                        {item.valueB}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+
+                {item.percent != null ? (
+                  <div className="mt-2 h-2 overflow-hidden border border-[#4e3221] bg-[#e7d7b4]">
+                    <div
+                      className="h-full bg-[#6b4a36] transition-[width] duration-300"
+                      style={{ width: `${item.percent ?? 0}%` }}
+                    />
+                  </div>
                 ) : null}
               </div>
-
-              {item.percent != null ? (
-                <div className="mt-3 h-2 overflow-hidden border border-[#4e3221] bg-[#e7d7b4]">
-                  <div
-                    className="h-full bg-[#6b4a36] transition-[width] duration-300"
-                    style={{ width: `${item.percent ?? 0}%` }}
-                  />
-                </div>
-              ) : null}
-            </div>
-          );
+            );
         })}
       </div>
-      <div className="border-t border-[#4e3221] bg-[#ead9b7] px-4 pb-12 pt-4">
+      <div className="flex min-h-[220px] flex-col justify-center border-t border-[#4e3221] bg-[#ead9b7] px-4 pb-4 pt-4">
         <div className="grid grid-cols-1 gap-3">
           <div className="border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
             <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
               <span>Zoom</span>
-            </div>
+              </div>
 
-            <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
-              <div
-                ref={zoomTrackRef}
-                className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
-                onPointerDown={onZoomDragStart}
-              >
+              <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
                 <div
-                  ref={zoomScaleFillRef}
-                  className="h-full bg-[#6b4a36] transition-[width] duration-150"
-                  style={{ width: "0%" }}
-                />
-                <div
-                  ref={zoomIndicatorRef}
-                  className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
-                  style={{ left: "0%" }}
-                />
+                  ref={zoomTrackRef}
+                  className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
+                  onPointerDown={onZoomDragStart}
+                >
+                  <div
+                    ref={zoomScaleFillRef}
+                    className="h-full bg-[#6b4a36] transition-[width] duration-150"
+                    style={{ width: "0%" }}
+                  />
+                  <div
+                    ref={zoomIndicatorRef}
+                    className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                    style={{ left: "0%" }}
+                  />
+                </div>
               </div>
             </div>
-          </div>
 
           <div className="min-w-0 border border-[#4e3221] bg-[#f6ead1] px-3 py-2 shadow-[4px_4px_0_rgba(78,50,33,0.18)]">
             <div className="mb-2 text-[8px] uppercase tracking-[0.24em] text-[#6b4a36]">
               <span>Scroll</span>
             </div>
 
-            <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
-              <div
-                ref={scrollTrackRef}
-                className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
-                onPointerDown={onScrollDragStart}
-              >
+              <div className="h-4 border border-[#4e3221] bg-[#efe1c3] p-[3px]">
                 <div
-                  ref={scrollProgressFillRef}
-                  className="h-full bg-[#6b4a36] transition-[width] duration-150"
-                  style={{ width: "0%" }}
-                />
-                <div
-                  ref={scrollIndicatorRef}
-                  className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
-                  style={{ left: "0%" }}
-                />
-              </div>
+                  ref={scrollTrackRef}
+                  className="pointer-events-auto relative h-full cursor-pointer overflow-visible"
+                  onPointerDown={onScrollDragStart}
+                >
+                  <div
+                    ref={scrollProgressFillRef}
+                    className="h-full bg-[#6b4a36] transition-[width] duration-150"
+                    style={{ width: "0%" }}
+                  />
+                  <div
+                    ref={scrollIndicatorRef}
+                    className="absolute top-1/2 h-[calc(100%+12px)] w-[3px] -translate-x-1/2 -translate-y-1/2 bg-[#ead9b7] shadow-[0_0_0_1px_#4e3221] transition-[left] duration-150"
+                    style={{ left: "0%" }}
+                  />
             </div>
           </div>
         </div>
       </div>
-    </div>
+      </div>
+      </div>
+    </>
   );
 }
 
