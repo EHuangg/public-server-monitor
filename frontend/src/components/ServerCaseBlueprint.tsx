@@ -14,6 +14,7 @@ import {
   MeshBasicMaterial,
   Object3D,
   PerspectiveCamera,
+  Quaternion,
   Raycaster,
   Scene,
   Vector2,
@@ -37,6 +38,10 @@ const MODEL_URL =
 const BLUEPRINT_BASE_COLOR = new Color(0xfdf4df);
 const BLUEPRINT_HIGHLIGHT_COLOR = new Color(0xd9eac7);
 
+function normalizeSceneName(name: string): string {
+  return name.replace(/[._\s-]/g, "").toLowerCase();
+}
+
 /**
  * Keep the current working scene behavior.
  * Do not "correct" axes beyond the overrides below.
@@ -59,7 +64,6 @@ const HOVER_PARTS: Record<string, number> = {
   "CPU.Fan.001": 0.05,
   "CPU.HeatSink": 0.03,
   GPUBase: 0.035,
-  GPUBase001: 0.035,
   GPUFan: 0.03,
   HDD: 0.035,
   SSD: 0.03,
@@ -71,7 +75,6 @@ const HOVER_DIRECTIONS: Record<string, Vector3> = {
   HDD: new Vector3(1, 0, 0),
   SSD: new Vector3(1, 0, 0),
   GPUBase: new Vector3(-1, 0, 0),
-  GPUBase001: new Vector3(-1, 0, 0),
   GPUFan: new Vector3(-1, 0, 0),
   CaseFan: new Vector3(-1, 0, 0),
   CaseFan001: new Vector3(-1, 0, 0),
@@ -96,28 +99,44 @@ const CPU_PART_NAMES = [
   ...CPU_HEATSINK_PART_NAMES,
 ];
 const MOTHERBOARD_PART_NAMES = ["MotherBoard"];
-const GPU_PART_NAMES = ["GPUBase", "GPUBase001", "GPUFan"];
+const GPU_PART_NAMES = ["GPUBase", "GPUFan"];
 const HDD_PART_NAMES = ["HDD"];
 const SSD_PART_NAMES = ["SSD"];
 const CASE_FAN_A_PART_NAMES = ["CaseFan", "CaseFan001"];
 const CASE_FAN_B_PART_NAMES = [...CPU_COOLER_HOVER_PART_NAMES];
 const CASE_FAN_HOVER_PART_NAMES = ["CaseFan", "CaseFan001"];
-const CLEARANCE_SHIFT_PART_NAMES = [
-  ...CPU_COOLER_HOVER_PART_NAMES,
-  "HDD",
-  "SSD",
-];
-const CLEARANCE_SHIFT_DISTANCE = 0.14;
-const CLEARANCE_SHIFT_DISTANCES: Partial<Record<string, number>> = {
-  CPUFan: 0.17,
-  CPUFan001: 0.17,
-  "CPU.Fan": 0.17,
-  "CPU.Fan.001": 0.17,
-  HDD: 0.14,
-  SSD: 0.18,
-};
 const GPU_FAN_SPIN_SPEED = 8;
 const RPM_TO_RAD_PER_SEC = (Math.PI * 2) / 60;
+const FLAT_LAYOUT_GROUPS = [
+  {
+    key: "gpu",
+    anchorName: "Anchor.GPU",
+    partNames: GPU_PART_NAMES,
+  },
+  {
+    key: "ssd",
+    anchorName: "Anchor.SSD",
+    partNames: ["SSD"],
+  },
+  {
+    key: "hdd",
+    anchorName: "Anchor.HDD",
+    partNames: ["HDD"],
+  },
+  {
+    key: "caseFan",
+    anchorName: "Anchor.Case.Fan",
+    partNames: CASE_FAN_HOVER_PART_NAMES,
+  },
+  {
+    key: "cpuCooler",
+    anchorName: "Anchor.CPU.Fan",
+    partNames: CPU_COOLER_HOVER_PART_NAMES,
+  },
+] as const;
+const FLAT_LAYOUT_GROUPS_BY_NORMALIZED_ANCHOR = new Map(
+  FLAT_LAYOUT_GROUPS.map((group) => [normalizeSceneName(group.anchorName), group] as const)
+);
 
 const SPINNING_FAN_CONFIGS = [
   { names: ["GPUFan"], axis: "y" as const, speed: GPU_FAN_SPIN_SPEED },
@@ -162,8 +181,8 @@ const GROUP_5_END = GROUP_5_START + GROUP_DURATION;
 const GROUP_6_START = GROUP_5_START + GROUP_OFFSET;
 const GROUP_6_END = GROUP_6_START + GROUP_DURATION;
 const FINAL_ANIMATION_PROGRESS = Math.min(0.995, GROUP_6_END + 0.06);
-const CLEARANCE_SHIFT_START = GROUP_6_START + 0.035;
-const CLEARANCE_SHIFT_END = Math.min(0.995, CLEARANCE_SHIFT_START + 0.12);
+const FLAT_LAYOUT_START = GROUP_6_START + 0.035;
+const FLAT_LAYOUT_END = Math.min(0.995, FLAT_LAYOUT_START + 0.16);
 
 const MIN_VISIBLE_SCALE = 0.0001;
 const PANEL_WIDTH = 240;
@@ -1518,7 +1537,11 @@ export default function ServerCaseBlueprint({
     const hoverTarget = new Map<string, number>();
     const hoverCurrent = new Map<string, number>();
     const hoverBaseWorld = new Map<string, Vector3>();
+    const hoverBaseQuaternion = new Map<string, Quaternion>();
     const hoverPickTargets: Object3D[] = [];
+    const layoutAnchorWorld = new Map<string, { position: Vector3; quaternion: Quaternion }>();
+    const flatLayoutPartToGroup = new Map<string, string>();
+    const flatLayoutBaseCenterWorld = new Map<string, Vector3>();
     const telemetryAnchorWorld = new Map<PanelKey, Vector3>();
     const spinningFanBaseRotations = new Map<
       string,
@@ -1848,18 +1871,34 @@ export default function ServerCaseBlueprint({
 
         const curOffset = hoverCurrent.get(name) ?? 0;
         const hoverDirection = HOVER_DIRECTIONS[name] ?? WORLD_UP;
-        const clearanceDistance =
-          CLEARANCE_SHIFT_DISTANCES[name] ?? CLEARANCE_SHIFT_DISTANCE;
-        const clearanceShift =
-          CLEARANCE_SHIFT_PART_NAMES.includes(name)
-            ? getPhaseProgress(progress, CLEARANCE_SHIFT_START, CLEARANCE_SHIFT_END) *
-              clearanceDistance
-            : 0;
-        const clearanceDirection = HOVER_DIRECTIONS["CPUFan"] ?? WORLD_UP;
-        const targetWorld = base
-          .clone()
-          .addScaledVector(clearanceDirection, clearanceShift)
-          .addScaledVector(hoverDirection, curOffset);
+        const layoutProgress = getPhaseProgress(
+          progress,
+          FLAT_LAYOUT_START,
+          FLAT_LAYOUT_END
+        );
+        const layoutGroupKey = flatLayoutPartToGroup.get(name);
+        const targetWorld = base.clone();
+
+        if (layoutGroupKey) {
+          const groupBaseCenter = flatLayoutBaseCenterWorld.get(layoutGroupKey);
+          const anchor = layoutAnchorWorld.get(layoutGroupKey);
+
+          if (groupBaseCenter && anchor) {
+            const relativeOffset = base.clone().sub(groupBaseCenter);
+            const layoutTargetWorld = anchor.position.clone().add(relativeOffset);
+            targetWorld.lerp(layoutTargetWorld, layoutProgress);
+
+            const baseQuaternion =
+              hoverBaseQuaternion.get(name)?.clone() ?? obj.quaternion.clone();
+            obj.quaternion.copy(baseQuaternion).slerp(anchor.quaternion, layoutProgress);
+          }
+        } else {
+          const baseQuaternion =
+            hoverBaseQuaternion.get(name)?.clone() ?? obj.quaternion.clone();
+          obj.quaternion.copy(baseQuaternion);
+        }
+
+        targetWorld.addScaledVector(hoverDirection, curOffset);
         const hoverAmount = clamp01(curOffset / Math.max(HOVER_PARTS[name] ?? 0.05, 0.0001));
         const localPos = targetWorld.clone();
         obj.parent.worldToLocal(localPos);
@@ -1887,13 +1926,7 @@ export default function ServerCaseBlueprint({
           const fan = hoverMap.get(fanName) ?? rootGroup.getObjectByName(fanName);
           if (!fan) continue;
 
-          const baseRotation = spinningFanBaseRotations.get(fanName) ?? {
-            x: fan.rotation.x,
-            y: fan.rotation.y,
-            z: fan.rotation.z,
-          };
-
-          fan.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
+          const orientedQuaternion = fan.quaternion.clone();
 
           if (config.speed === 0 && config.metricKind) {
             const rpm =
@@ -1905,12 +1938,31 @@ export default function ServerCaseBlueprint({
             }
 
             const liveAngularSpeed = rpm * RPM_TO_RAD_PER_SEC;
-            fan.rotation[config.axis] =
-              baseRotation[config.axis] + spinTime * liveAngularSpeed;
+            const spinAxis =
+              config.axis === "x"
+                ? new Vector3(1, 0, 0)
+                : config.axis === "y"
+                  ? new Vector3(0, 1, 0)
+                  : new Vector3(0, 0, 1);
+            const spinQuaternion = new Quaternion().setFromAxisAngle(
+              spinAxis,
+              spinTime * liveAngularSpeed
+            );
+            fan.quaternion.copy(orientedQuaternion).multiply(spinQuaternion);
             continue;
           }
 
-          fan.rotation[config.axis] = baseRotation[config.axis] + spinTime * config.speed;
+          const spinAxis =
+            config.axis === "x"
+              ? new Vector3(1, 0, 0)
+              : config.axis === "y"
+                ? new Vector3(0, 1, 0)
+                : new Vector3(0, 0, 1);
+          const spinQuaternion = new Quaternion().setFromAxisAngle(
+            spinAxis,
+            spinTime * config.speed
+          );
+          fan.quaternion.copy(orientedQuaternion).multiply(spinQuaternion);
         }
       }
     };
@@ -2172,6 +2224,22 @@ export default function ServerCaseBlueprint({
         const n = child.name;
         if (!n) return;
 
+        const flatLayoutGroup = FLAT_LAYOUT_GROUPS_BY_NORMALIZED_ANCHOR.get(
+          normalizeSceneName(n)
+        );
+        if (flatLayoutGroup) {
+          const anchorWorldPosition = new Vector3();
+          const anchorWorldQuaternion = new Quaternion();
+          child.getWorldPosition(anchorWorldPosition);
+          child.getWorldQuaternion(anchorWorldQuaternion);
+          layoutAnchorWorld.set(flatLayoutGroup.key, {
+            position: anchorWorldPosition,
+            quaternion: anchorWorldQuaternion,
+          });
+          child.visible = false;
+          return;
+        }
+
         originalScales.set(n, child.scale.clone());
 
         if (n in HOVER_PARTS) {
@@ -2247,6 +2315,7 @@ export default function ServerCaseBlueprint({
         const wp = new Vector3();
         obj.getWorldPosition(wp);
         hoverBaseWorld.set(name, wp.clone());
+        hoverBaseQuaternion.set(name, obj.quaternion.clone());
         hoverTarget.set(name, 0);
         hoverCurrent.set(name, 0);
         hoverPickTargets.push(obj);
@@ -2256,6 +2325,26 @@ export default function ServerCaseBlueprint({
           if (!(edge instanceof LineSegments)) return;
           edge.scale.setScalar(1.01);
         });
+      }
+
+      for (const group of FLAT_LAYOUT_GROUPS) {
+        const groupPositions = group.partNames
+          .map((partName) => hoverBaseWorld.get(partName)?.clone() ?? null)
+          .filter((value): value is Vector3 => value != null);
+
+        if (groupPositions.length === 0 || !layoutAnchorWorld.has(group.key)) continue;
+
+        const center = groupPositions.reduce(
+          (acc, point) => acc.add(point),
+          new Vector3()
+        );
+        center.multiplyScalar(1 / groupPositions.length);
+        flatLayoutBaseCenterWorld.set(group.key, center);
+
+        for (const partName of group.partNames) {
+          if (!hoverMap.has(partName)) continue;
+          flatLayoutPartToGroup.set(partName, group.key);
+        }
       }
 
       for (const config of SPINNING_FAN_CONFIGS) {
