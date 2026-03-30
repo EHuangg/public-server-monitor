@@ -35,7 +35,7 @@ import type { MetricsResponse } from "@/lib/types";
 const MODEL_URL =
   process.env.NEXT_PUBLIC_SERVER_CASE_GLB ?? "/models/server-case.glb";
 
-const BLUEPRINT_BASE_COLOR = new Color(0xfdf4df);
+const BLUEPRINT_BASE_COLOR = new Color(0xf6ead1);
 const BLUEPRINT_HIGHLIGHT_HEX = "#d9e8f7";
 const BLUEPRINT_ALERT_HIGHLIGHT_HEX = "#efb7b7";
 const BLUEPRINT_HIGHLIGHT_COLOR = new Color(BLUEPRINT_HIGHLIGHT_HEX);
