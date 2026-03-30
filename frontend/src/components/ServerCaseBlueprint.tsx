@@ -2076,6 +2076,11 @@ export default function ServerCaseBlueprint({
     };
 
     const setHoverTargets = (hoveredNames: Set<string>) => {
+      const hoverEnabled = animationProgressRef.current >= FLAT_LAYOUT_START;
+      if (!hoverEnabled) {
+        hoveredNames = new Set<string>();
+      }
+
       const sidebarKey = sidebarHoverKeyRef.current;
       const sidebarConfig = sidebarKey
         ? PANEL_CONFIGS.find((config) => config.key === sidebarKey)
@@ -2235,7 +2240,7 @@ export default function ServerCaseBlueprint({
       controls.minDistance = dist * 0.55;
       controls.maxDistance = dist * 1.2;
       camera.position.set(
-        motherboardCenter.x + dist * 0.55,
+        motherboardCenter.x - dist * 0.55,
         motherboardCenter.y + dist * 0.35,
         motherboardCenter.z + dist * 0.65
       );
