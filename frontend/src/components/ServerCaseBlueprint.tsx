@@ -36,7 +36,27 @@ const MODEL_URL =
   process.env.NEXT_PUBLIC_SERVER_CASE_GLB ?? "/models/server-case.glb";
 
 const BLUEPRINT_BASE_COLOR = new Color(0xfdf4df);
-const BLUEPRINT_HIGHLIGHT_COLOR = new Color(0xd9eac7);
+const BLUEPRINT_HIGHLIGHT_HEX = "#d9e8f7";
+const BLUEPRINT_ALERT_HIGHLIGHT_HEX = "#efb7b7";
+const BLUEPRINT_HIGHLIGHT_COLOR = new Color(BLUEPRINT_HIGHLIGHT_HEX);
+const BLUEPRINT_ALERT_HIGHLIGHT_COLOR = new Color(BLUEPRINT_ALERT_HIGHLIGHT_HEX);
+
+function isSystemDown(metrics: MetricsResponse | null): boolean {
+  const health = metrics?.system_health?.trim().toLowerCase() ?? "";
+  return health.includes("down") || health.includes("offline");
+}
+
+function getBlueprintHighlightHex(metrics: MetricsResponse | null): string {
+  return isSystemDown(metrics)
+    ? BLUEPRINT_ALERT_HIGHLIGHT_HEX
+    : BLUEPRINT_HIGHLIGHT_HEX;
+}
+
+function getBlueprintHighlightColor(metrics: MetricsResponse | null): Color {
+  return isSystemDown(metrics)
+    ? BLUEPRINT_ALERT_HIGHLIGHT_COLOR.clone()
+    : BLUEPRINT_HIGHLIGHT_COLOR.clone();
+}
 
 function normalizeSceneName(name: string): string {
   return name.replace(/[._\s-]/g, "").toLowerCase();
@@ -897,6 +917,7 @@ function MobileSummaryWindow({
 function DesktopTelemetrySidebar({
   items,
   activeKey,
+  highlightHex,
   onHoverChange,
   zoomTrackRef,
   zoomScaleFillRef,
@@ -909,6 +930,7 @@ function DesktopTelemetrySidebar({
 }: {
   items: SidebarTelemetryItem[];
   activeKey: PanelKey | null;
+  highlightHex: string;
   onHoverChange: (key: PanelKey | null) => void;
   zoomTrackRef: RefObject<HTMLDivElement>;
   zoomScaleFillRef: RefObject<HTMLDivElement>;
@@ -935,9 +957,10 @@ function DesktopTelemetrySidebar({
               className={[
                 "border-b px-4 py-2.5 transition-colors",
                 isActive
-                  ? "border-[#4e3221] bg-[#d9eac7]"
+                  ? "border-[#4e3221]"
                   : "border-[#4e3221] bg-[#f6ead1] hover:bg-[#efe1c3]",
               ].join(" ")}
+                style={isActive ? { backgroundColor: highlightHex } : undefined}
                 onPointerEnter={() => onHoverChange(item.key)}
                 onPointerLeave={() => onHoverChange(null)}
               >
@@ -1156,6 +1179,7 @@ export default function ServerCaseBlueprint({
     ],
     [metrics]
   );
+  const highlightHex = useMemo(() => getBlueprintHighlightHex(metrics), [metrics]);
   const desktopSidebarItems = useMemo<SidebarTelemetryItem[]>(
     () => [
       {
@@ -1545,7 +1569,7 @@ export default function ServerCaseBlueprint({
     const lerpAmount = 0.05;
 
     const scene = new Scene();
-    scene.background = new Color(0xfbf6ee);
+    scene.background = new Color(0xead9b7);
 
     const camera = new PerspectiveCamera(45, 1, 0.01, 500);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true });
@@ -1962,7 +1986,9 @@ export default function ServerCaseBlueprint({
               ? child.userData.blueprintBaseColor
               : BLUEPRINT_BASE_COLOR.getHex()
           );
-          material.color.copy(baseColor).lerp(BLUEPRINT_HIGHLIGHT_COLOR, hoverAmount);
+          material.color
+            .copy(baseColor)
+            .lerp(getBlueprintHighlightColor(metricsRef.current), hoverAmount);
         });
       }
 
@@ -2559,6 +2585,7 @@ export default function ServerCaseBlueprint({
         <DesktopTelemetrySidebar
           items={desktopSidebarItems}
           activeKey={sidebarHoverKey ?? modelHoverKey}
+          highlightHex={highlightHex}
           onHoverChange={setSidebarHoverKey}
           zoomTrackRef={zoomTrackRef}
           zoomScaleFillRef={zoomScaleFillRef}
@@ -2569,7 +2596,7 @@ export default function ServerCaseBlueprint({
           onZoomDragStart={startHudDrag("zoom", "x", false, zoomTrackRef)}
           onScrollDragStart={startHudDrag("scroll", "x", false, scrollTrackRef)}
         />
-        <div className="relative z-10 border-t border-brownBorder/70 bg-creamBg px-4 py-3 text-center text-xs uppercase tracking-wider text-brownMuted">
+        <div className="relative z-10 border-t border-brownBorder/70 bg-[#ead9b7] px-4 py-3 text-center text-xs uppercase tracking-wider text-brownMuted">
           <a href="https://evan-huang.dev" className="hover:underline">
             Evan
           </a>
