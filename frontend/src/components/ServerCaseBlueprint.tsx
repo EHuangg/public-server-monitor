@@ -72,12 +72,18 @@ const HOVER_PARTS: Record<string, number> = {
 };
 
 const HOVER_DIRECTIONS: Record<string, Vector3> = {
-  HDD: new Vector3(1, 0, 0),
-  SSD: new Vector3(1, 0, 0),
-  GPUBase: new Vector3(-1, 0, 0),
-  GPUFan: new Vector3(-1, 0, 0),
-  CaseFan: new Vector3(-1, 0, 0),
-  CaseFan001: new Vector3(-1, 0, 0),
+  HDD: new Vector3(0, 0, 1),
+  SSD: new Vector3(0, 0, 1),
+  GPUBase: new Vector3(0, 0, 1),
+  GPUFan: new Vector3(0, 0, 1),
+  CPUFan: new Vector3(0, 0, 1),
+  CPUFan001: new Vector3(0, 0, 1),
+  CPUHeatSink: new Vector3(0, 0, 1),
+  "CPU.Fan": new Vector3(0, 0, 1),
+  "CPU.Fan.001": new Vector3(0, 0, 1),
+  "CPU.HeatSink": new Vector3(0, 0, 1),
+  CaseFan: new Vector3(0, 0, 1),
+  CaseFan001: new Vector3(0, 0, 1),
 };
 
 const RAM_PART_NAMES = ["RAM", "RAM001", "RAM002", "RAM003"];
