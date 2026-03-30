@@ -52,6 +52,12 @@ const HOVER_PARTS: Record<string, number> = {
   RAM003: 0.04,
   CPU: 0.05,
   CPU001: 0.08,
+  CPUFan: 0.05,
+  CPUFan001: 0.05,
+  CPUHeatSink: 0.03,
+  "CPU.Fan": 0.05,
+  "CPU.Fan.001": 0.05,
+  "CPU.HeatSink": 0.03,
   GPUBase: 0.035,
   GPUBase001: 0.035,
   GPUFan: 0.03,
@@ -72,23 +78,60 @@ const HOVER_DIRECTIONS: Record<string, Vector3> = {
 };
 
 const RAM_PART_NAMES = ["RAM", "RAM001", "RAM002", "RAM003"];
-const CPU_PART_NAMES = ["CPU", "CPU001"];
+const CPU_CORE_PART_NAMES = ["CPU", "CPU001"];
+const CPU_FAN_HOVER_PART_NAMES = [
+  "CPUFan",
+  "CPUFan001",
+  "CPU.Fan",
+  "CPU.Fan.001",
+];
+const CPU_HEATSINK_PART_NAMES = ["CPUHeatSink", "CPU.HeatSink"];
+const CPU_COOLER_HOVER_PART_NAMES = [
+  ...CPU_FAN_HOVER_PART_NAMES,
+  ...CPU_HEATSINK_PART_NAMES,
+];
+const CPU_PART_NAMES = [
+  ...CPU_CORE_PART_NAMES,
+  ...CPU_FAN_HOVER_PART_NAMES,
+  ...CPU_HEATSINK_PART_NAMES,
+];
 const MOTHERBOARD_PART_NAMES = ["MotherBoard"];
 const GPU_PART_NAMES = ["GPUBase", "GPUBase001", "GPUFan"];
 const HDD_PART_NAMES = ["HDD"];
 const SSD_PART_NAMES = ["SSD"];
-const CASE_FAN_A_PART_NAMES = ["CaseFan"];
-const CASE_FAN_B_PART_NAMES = ["CaseFan001"];
+const CASE_FAN_A_PART_NAMES = ["CaseFan", "CaseFan001"];
+const CASE_FAN_B_PART_NAMES = [...CPU_COOLER_HOVER_PART_NAMES];
 const CASE_FAN_HOVER_PART_NAMES = ["CaseFan", "CaseFan001"];
+const CLEARANCE_SHIFT_PART_NAMES = [
+  ...CPU_COOLER_HOVER_PART_NAMES,
+  "HDD",
+  "SSD",
+];
+const CLEARANCE_SHIFT_DISTANCE = 0.14;
+const CLEARANCE_SHIFT_DISTANCES: Partial<Record<string, number>> = {
+  CPUFan: 0.17,
+  CPUFan001: 0.17,
+  "CPU.Fan": 0.17,
+  "CPU.Fan.001": 0.17,
+  HDD: 0.14,
+  SSD: 0.18,
+};
 const GPU_FAN_SPIN_SPEED = 8;
 const RPM_TO_RAD_PER_SEC = (Math.PI * 2) / 60;
 
 const SPINNING_FAN_CONFIGS = [
   { names: ["GPUFan"], axis: "y" as const, speed: GPU_FAN_SPIN_SPEED },
   {
-    names: ["CaseFan", "CPUFan"],
+    names: ["CaseFan"],
     axis: "x" as const,
     speed: 0,
+    metricKind: "case" as const,
+  },
+  {
+    names: ["CPUFan", "CPU.Fan"],
+    axis: "y" as const,
+    speed: 0,
+    metricKind: "cpu" as const,
   },
 ];
 
@@ -119,6 +162,8 @@ const GROUP_5_END = GROUP_5_START + GROUP_DURATION;
 const GROUP_6_START = GROUP_5_START + GROUP_OFFSET;
 const GROUP_6_END = GROUP_6_START + GROUP_DURATION;
 const FINAL_ANIMATION_PROGRESS = Math.min(0.995, GROUP_6_END + 0.06);
+const CLEARANCE_SHIFT_START = GROUP_6_START + 0.035;
+const CLEARANCE_SHIFT_END = Math.min(0.995, CLEARANCE_SHIFT_START + 0.12);
 
 const MIN_VISIBLE_SCALE = 0.0001;
 const PANEL_WIDTH = 240;
@@ -144,7 +189,7 @@ type PanelConfig = {
 };
 
 const PANEL_CONFIGS: PanelConfig[] = [
-  { key: "cpu", partNames: CPU_PART_NAMES, revealStart: GROUP_2_START },
+  { key: "cpu", partNames: CPU_CORE_PART_NAMES, revealStart: GROUP_2_START },
   { key: "ram", partNames: RAM_PART_NAMES, revealStart: GROUP_2_START },
   { key: "gpu", partNames: GPU_PART_NAMES, revealStart: GROUP_2_START },
   { key: "hdd", partNames: HDD_PART_NAMES, revealStart: GROUP_2_START },
@@ -815,7 +860,7 @@ function DesktopTelemetrySidebar({
         <div className="border-b border-[#4e3221] bg-[#ead9b7] px-4 py-4 text-[10px] uppercase tracking-[0.22em] text-[#3a2418]">
           System Telemetry
         </div>
-      <div className="retro-sidebar-scroll flex-1 overflow-y-auto px-0 py-0">
+      <div className="sidebar-scroll-hidden flex-1 overflow-y-auto px-0 py-0">
         {items.map((item) => {
             const isActive = item.key != null && item.key === activeKey;
 
@@ -1110,7 +1155,7 @@ export default function ServerCaseBlueprint({
         percent: caseFanATelemetry.percent,
       },
       {
-        key: null,
+        key: "caseFanB",
         title: buildPartTitle(
           "CPU Fan",
           getFanMetricByLabel(metrics, "cpu")?.model ?? null
@@ -1503,15 +1548,15 @@ export default function ServerCaseBlueprint({
         return [GROUP_2_START, GROUP_2_END];
       }
 
-      if (name === "Side_right") {
+      if (name === "BackPower") {
         return [GROUP_3_START, GROUP_3_END];
       }
 
-      if (name === "Side_left") {
+      if (name === "Side_right") {
         return [GROUP_4_START, GROUP_4_END];
       }
 
-      if (name === "BackPower") {
+      if (name === "Side_left") {
         return [GROUP_5_START, GROUP_5_END];
       }
 
@@ -1803,7 +1848,18 @@ export default function ServerCaseBlueprint({
 
         const curOffset = hoverCurrent.get(name) ?? 0;
         const hoverDirection = HOVER_DIRECTIONS[name] ?? WORLD_UP;
-        const targetWorld = base.clone().addScaledVector(hoverDirection, curOffset);
+        const clearanceDistance =
+          CLEARANCE_SHIFT_DISTANCES[name] ?? CLEARANCE_SHIFT_DISTANCE;
+        const clearanceShift =
+          CLEARANCE_SHIFT_PART_NAMES.includes(name)
+            ? getPhaseProgress(progress, CLEARANCE_SHIFT_START, CLEARANCE_SHIFT_END) *
+              clearanceDistance
+            : 0;
+        const clearanceDirection = HOVER_DIRECTIONS["CPUFan"] ?? WORLD_UP;
+        const targetWorld = base
+          .clone()
+          .addScaledVector(clearanceDirection, clearanceShift)
+          .addScaledVector(hoverDirection, curOffset);
         const hoverAmount = clamp01(curOffset / Math.max(HOVER_PARTS[name] ?? 0.05, 0.0001));
         const localPos = targetWorld.clone();
         obj.parent.worldToLocal(localPos);
@@ -1839,8 +1895,11 @@ export default function ServerCaseBlueprint({
 
           fan.rotation.set(baseRotation.x, baseRotation.y, baseRotation.z);
 
-          if (config.axis === "x") {
-            const rpm = getCaseFanRpm(metricsRef.current);
+          if (config.speed === 0 && config.metricKind) {
+            const rpm =
+              config.metricKind === "cpu"
+                ? getFanMetricByLabel(metricsRef.current, "cpu")?.rpm ?? null
+                : getFanMetricByLabel(metricsRef.current, "case")?.rpm ?? null;
             if (!rpm) {
               continue;
             }
@@ -1938,7 +1997,9 @@ export default function ServerCaseBlueprint({
 
       let nextModelHoverKey: PanelKey | null = null;
 
-      if (hoveredNames.has("CaseFan") || hoveredNames.has("CaseFan001")) {
+      if (CPU_COOLER_HOVER_PART_NAMES.some((name) => hoveredNames.has(name))) {
+        nextModelHoverKey = "caseFanB";
+      } else if (hoveredNames.has("CaseFan") || hoveredNames.has("CaseFan001")) {
         nextModelHoverKey = "caseFanA";
       } else if (hoveredNames.has("HDD")) {
         nextModelHoverKey = "hdd";
@@ -1964,14 +2025,20 @@ export default function ServerCaseBlueprint({
       }
 
       let cpuHovered = false;
+      let cpuCoolerHovered = false;
       let gpuHovered = false;
       let caseFanHovered = false;
 
       for (const [name] of hoverMap) {
         const hovered = hoveredNames.has(name);
 
-        if (CPU_PART_NAMES.includes(name)) {
+        if (CPU_CORE_PART_NAMES.includes(name)) {
           cpuHovered ||= hovered;
+          continue;
+        }
+
+        if (CPU_COOLER_HOVER_PART_NAMES.includes(name)) {
+          cpuCoolerHovered ||= hovered;
           continue;
         }
 
@@ -1988,9 +2055,17 @@ export default function ServerCaseBlueprint({
         hoverTarget.set(name, hovered ? HOVER_PARTS[name] ?? 0.05 : 0);
       }
 
-      for (const cpuName of CPU_PART_NAMES) {
+      for (const cpuName of CPU_CORE_PART_NAMES) {
         if (!hoverMap.has(cpuName)) continue;
         hoverTarget.set(cpuName, cpuHovered ? HOVER_PARTS[cpuName] ?? 0.05 : 0);
+      }
+
+      for (const cpuCoolerName of CPU_COOLER_HOVER_PART_NAMES) {
+        if (!hoverMap.has(cpuCoolerName)) continue;
+        hoverTarget.set(
+          cpuCoolerName,
+          cpuCoolerHovered ? HOVER_PARTS[cpuCoolerName] ?? 0.05 : 0
+        );
       }
 
       for (const gpuName of GPU_PART_NAMES) {
