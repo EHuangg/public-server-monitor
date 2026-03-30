@@ -144,6 +144,12 @@ const FLAT_LAYOUT_GROUPS_BY_NORMALIZED_ANCHOR = new Map(
   FLAT_LAYOUT_GROUPS.map((group) => [normalizeSceneName(group.anchorName), group] as const)
 );
 
+function getSpinAxisVector(axis: "x" | "y" | "z"): Vector3 {
+  if (axis === "x") return new Vector3(1, 0, 0);
+  if (axis === "y") return new Vector3(0, 1, 0);
+  return new Vector3(0, 0, 1);
+}
+
 const SPINNING_FAN_CONFIGS = [
   { names: ["GPUFan"], axis: "y" as const, speed: GPU_FAN_SPIN_SPEED },
   {
@@ -154,7 +160,7 @@ const SPINNING_FAN_CONFIGS = [
   },
   {
     names: ["CPUFan", "CPU.Fan"],
-    axis: "y" as const,
+    axis: "z" as const,
     speed: 0,
     metricKind: "cpu" as const,
   },
@@ -696,12 +702,46 @@ function extractGpuTelemetry(metrics: MetricsResponse | null): PanelData {
   };
 }
 
+function getDiskMetricByLabel(
+  metrics: MetricsResponse | null,
+  kind: "hdd" | "ssd",
+  fallbackIndex: number
+) {
+  const disks = metrics?.disks ?? [];
+
+  const preferredDisk =
+    kind === "ssd"
+      ? disks.find((disk) => {
+          const label = disk.label?.toLowerCase() ?? "";
+          return (
+            label.includes("ssd") ||
+            label.includes("solid state") ||
+            label.includes("nvme")
+          );
+        })
+      : disks.find((disk) => {
+          const label = disk.label?.toLowerCase() ?? "";
+          return (
+            label.includes("hdd") ||
+            label.includes("hard disk") ||
+            label.includes("spinning")
+          );
+        });
+
+  return preferredDisk ?? disks[fallbackIndex] ?? null;
+}
+
 function extractDiskTelemetry(
   metrics: MetricsResponse | null,
   index: number,
   title: string
 ): PanelData {
-  const disk = metrics?.disks?.[index] ?? null;
+  const disk =
+    title === "SSD"
+      ? getDiskMetricByLabel(metrics, "ssd", index)
+      : title === "HDD"
+        ? getDiskMetricByLabel(metrics, "hdd", index)
+        : metrics?.disks?.[index] ?? null;
 
   return {
     title,
@@ -1944,28 +1984,16 @@ export default function ServerCaseBlueprint({
             }
 
             const liveAngularSpeed = rpm * RPM_TO_RAD_PER_SEC;
-            const spinAxis =
-              config.axis === "x"
-                ? new Vector3(1, 0, 0)
-                : config.axis === "y"
-                  ? new Vector3(0, 1, 0)
-                  : new Vector3(0, 0, 1);
             const spinQuaternion = new Quaternion().setFromAxisAngle(
-              spinAxis,
+              getSpinAxisVector(config.axis),
               spinTime * liveAngularSpeed
             );
             fan.quaternion.copy(orientedQuaternion).multiply(spinQuaternion);
             continue;
           }
 
-          const spinAxis =
-            config.axis === "x"
-              ? new Vector3(1, 0, 0)
-              : config.axis === "y"
-                ? new Vector3(0, 1, 0)
-                : new Vector3(0, 0, 1);
           const spinQuaternion = new Quaternion().setFromAxisAngle(
-            spinAxis,
+            getSpinAxisVector(config.axis),
             spinTime * config.speed
           );
           fan.quaternion.copy(orientedQuaternion).multiply(spinQuaternion);

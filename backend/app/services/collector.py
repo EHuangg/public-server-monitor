@@ -100,6 +100,33 @@ def _first_present(dct: dict, keys: list[str]) -> object | None:
     return None
 
 
+def _normalize_device_name(value: object) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    text = text.removeprefix("/dev/").strip()
+    if not text:
+        return None
+
+    return text
+
+
+def _disk_label_from_item(device_name: str | None, mountpoint: str, index: int) -> str:
+    device_text = (device_name or "").lower()
+
+    if mountpoint == "/":
+        return "System Disk"
+    if "nvme" in device_text or "ssd" in device_text:
+        return "SSD"
+    if device_text:
+        return "HDD"
+    return "Data Disk" if index == 0 else f"Data Disk {index + 1}"
+
+
 def _run_command(cmd: list[str]) -> str | None:
     try:
         result = subprocess.run(
@@ -294,6 +321,7 @@ def _extract_cpu_temperatures() -> list[TemperatureMetric]:
 
 def _extract_disks(payload: dict) -> list[DiskMetric]:
     disks: list[DiskMetric] = []
+    seen_devices: set[str] = set()
 
     fs_payload = payload.get("fs")
     candidates: list[dict] = []
@@ -305,6 +333,9 @@ def _extract_disks(payload: dict) -> list[DiskMetric]:
         mountpoint = str(
             _first_present(item, ["mnt_point", "mount_point", "mount", "path"]) or ""
         ).strip()
+        device_name = _normalize_device_name(
+            _first_present(item, ["device_name", "device", "dev_name", "disk_name", "name"])
+        )
 
         if not mountpoint:
             continue
@@ -324,7 +355,12 @@ def _extract_disks(payload: dict) -> list[DiskMetric]:
         if total_gb is None or total_gb <= 1:
             continue
 
-        label = "System Disk" if mountpoint == "/" else "Data Disk"
+        if device_name and device_name in seen_devices:
+            continue
+        if device_name:
+            seen_devices.add(device_name)
+
+        label = _disk_label_from_item(device_name, mountpoint, len(disks))
 
         existing_labels = {d.label for d in disks}
         if label in existing_labels:
