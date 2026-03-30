@@ -24,7 +24,7 @@ body::-webkit-scrollbar {
 
 .retro-sidebar-scroll {
   scrollbar-width: auto;
-  scrollbar-color: #9b9b9b #e6dcc6;
+  scrollbar-color: #8e735d #efe1c3;
 }
 
 .retro-sidebar-scroll::-webkit-scrollbar {
@@ -32,28 +32,28 @@ body::-webkit-scrollbar {
 }
 
 .retro-sidebar-scroll::-webkit-scrollbar-track {
-  background: #e6dcc6;
+  background: #efe1c3;
   border-left: 1px solid #4e3221;
 }
 
 .retro-sidebar-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #d8d8d8 0%, #a8a8a8 100%);
+  background: linear-gradient(180deg, #d9c2a3 0%, #b99874 100%);
   border: 1px solid #4e3221;
   box-shadow:
-    inset 1px 1px 0 #f3f3f3,
-    inset -1px -1px 0 #7e7e7e;
+    inset 1px 1px 0 #f7ecd7,
+    inset -1px -1px 0 #8f7053;
 }
 
 .retro-sidebar-scroll::-webkit-scrollbar-button:single-button {
   display: block;
   height: 18px;
-  background-color: #d8d8d8;
+  background-color: #e7d7b4;
   border-left: 1px solid #4e3221;
   border-top: 1px solid #4e3221;
   border-bottom: 1px solid #4e3221;
   box-shadow:
-    inset 1px 1px 0 #f3f3f3,
-    inset -1px -1px 0 #7e7e7e;
+    inset 1px 1px 0 #fbf3e0,
+    inset -1px -1px 0 #9a7b5d;
   background-position: center;
   background-repeat: no-repeat;
   background-size: 8px 8px;
