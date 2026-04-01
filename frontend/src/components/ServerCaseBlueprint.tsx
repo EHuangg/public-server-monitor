@@ -40,22 +40,98 @@ const BLUEPRINT_HIGHLIGHT_HEX = "#d9e8f7";
 const BLUEPRINT_ALERT_HIGHLIGHT_HEX = "#efb7b7";
 const BLUEPRINT_HIGHLIGHT_COLOR = new Color(BLUEPRINT_HIGHLIGHT_HEX);
 const BLUEPRINT_ALERT_HIGHLIGHT_COLOR = new Color(BLUEPRINT_ALERT_HIGHLIGHT_HEX);
+const STATUS_LIGHT_UP_COLOR = new Color(0xcfe9c8);
+const STATUS_LIGHT_DOWN_COLOR = new Color(0xefb7b7);
+
+function hasAnyTelemetry(metrics: MetricsResponse | null): boolean {
+  if (!metrics) return false;
+
+  return (
+    typeof metrics.uptime_seconds === "number" ||
+    typeof metrics.cpu?.percent === "number" ||
+    typeof metrics.mem?.percent === "number" ||
+    typeof metrics.gpu?.percent === "number" ||
+    typeof metrics.gpu?.temperature_c === "number" ||
+    (metrics.fans?.length ?? 0) > 0 ||
+    (metrics.disks?.length ?? 0) > 0 ||
+    Boolean(metrics.last_updated)
+  );
+}
 
 function isSystemDown(metrics: MetricsResponse | null): boolean {
   const health = metrics?.system_health?.trim().toLowerCase() ?? "";
   return health.includes("down") || health.includes("offline");
 }
 
+function isSystemUp(metrics: MetricsResponse | null): boolean {
+  return hasAnyTelemetry(metrics) && !isSystemDown(metrics);
+}
+
 function getBlueprintHighlightHex(metrics: MetricsResponse | null): string {
-  return isSystemDown(metrics)
-    ? BLUEPRINT_ALERT_HIGHLIGHT_HEX
-    : BLUEPRINT_HIGHLIGHT_HEX;
+  return isSystemUp(metrics) ? BLUEPRINT_HIGHLIGHT_HEX : BLUEPRINT_ALERT_HIGHLIGHT_HEX;
 }
 
 function getBlueprintHighlightColor(metrics: MetricsResponse | null): Color {
-  return isSystemDown(metrics)
-    ? BLUEPRINT_ALERT_HIGHLIGHT_COLOR.clone()
-    : BLUEPRINT_HIGHLIGHT_COLOR.clone();
+  return isSystemUp(metrics)
+    ? BLUEPRINT_HIGHLIGHT_COLOR.clone()
+    : BLUEPRINT_ALERT_HIGHLIGHT_COLOR.clone();
+}
+
+function isBackPowerLightName(name: string): boolean {
+  return normalizeSceneName(name) === normalizeSceneName("Back.Power.Light");
+}
+
+function getStatusLightBaseColor(metrics: MetricsResponse | null): Color {
+  return isSystemUp(metrics) ? STATUS_LIGHT_UP_COLOR.clone() : STATUS_LIGHT_DOWN_COLOR.clone();
+}
+
+function hasNumber(value: number | null | undefined): boolean {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function getPanelHasData(panelKey: PanelKey | null, metrics: MetricsResponse | null): boolean {
+  if (!panelKey) return hasAnyTelemetry(metrics);
+  if (!hasAnyTelemetry(metrics)) return false;
+
+  switch (panelKey) {
+    case "cpu":
+      return hasNumber(metrics?.cpu?.percent);
+    case "ram":
+      return (
+        hasNumber(metrics?.mem?.percent) ||
+        hasNumber(metrics?.mem?.used_gb) ||
+        hasNumber(metrics?.mem?.total_gb)
+      );
+    case "gpu":
+      return (
+        hasNumber(metrics?.gpu?.percent) ||
+        hasNumber(metrics?.gpu?.temperature_c) ||
+        hasNumber(metrics?.gpu?.used_gb) ||
+        hasNumber(metrics?.gpu?.total_gb)
+      );
+    case "hdd":
+      return getDiskMetricByLabel(metrics, "hdd", 0) != null;
+    case "ssd":
+      return getDiskMetricByLabel(metrics, "ssd", 1) != null;
+    case "caseFanA":
+      return hasNumber(getFanMetricByLabel(metrics, "case")?.rpm);
+    case "caseFanB":
+      return hasNumber(getFanMetricByLabel(metrics, "cpu")?.rpm);
+    default:
+      return false;
+  }
+}
+
+function getPanelHighlightHex(panelKey: PanelKey | null, metrics: MetricsResponse | null): string {
+  return getPanelHasData(panelKey, metrics)
+    ? BLUEPRINT_HIGHLIGHT_HEX
+    : BLUEPRINT_ALERT_HIGHLIGHT_HEX;
+}
+
+function getPanelHighlightColor(panelKey: PanelKey | null, metrics: MetricsResponse | null): Color {
+  return getPanelHasData(panelKey, metrics)
+    ? BLUEPRINT_HIGHLIGHT_COLOR.clone()
+    : BLUEPRINT_ALERT_HIGHLIGHT_COLOR.clone();
 }
 
 function normalizeSceneName(name: string): string {
@@ -427,12 +503,12 @@ function buildOrthogonalPath(points: Point[]): string {
     .join(" ");
 }
 
-function applyBlueprintStyle(mesh: Mesh): void {
+function applyBlueprintStyle(mesh: Mesh, baseColor: Color = BLUEPRINT_BASE_COLOR): void {
   const geom = mesh.geometry;
   if (!geom) return;
 
   const mat = new MeshBasicMaterial({
-    color: BLUEPRINT_BASE_COLOR.clone(),
+    color: baseColor.clone(),
     transparent: false,
     opacity: 1,
     depthWrite: true,
@@ -444,7 +520,7 @@ function applyBlueprintStyle(mesh: Mesh): void {
   });
 
   mesh.material = mat;
-  mesh.userData.blueprintBaseColor = BLUEPRINT_BASE_COLOR.getHex();
+  mesh.userData.blueprintBaseColor = baseColor.getHex();
 
   const edges = new EdgesGeometry(geom, 15);
   const line = new LineSegments(
@@ -457,10 +533,13 @@ function applyBlueprintStyle(mesh: Mesh): void {
   mesh.add(line);
 }
 
-function applyBlueprintToScene(scene: Scene): void {
+function applyBlueprintToScene(scene: Scene, metrics: MetricsResponse | null): void {
   scene.traverse((child) => {
     if (!(child instanceof Mesh) || !child.geometry) return;
-    applyBlueprintStyle(child);
+    applyBlueprintStyle(
+      child,
+      isBackPowerLightName(child.name) ? getStatusLightBaseColor(metrics) : BLUEPRINT_BASE_COLOR
+    );
   });
 }
 
@@ -612,6 +691,7 @@ type SidebarTelemetryItem = {
   valueB?: string;
   load?: string;
   percent: number | null;
+  highlightHex?: string;
 };
 
 function appendPercentSuffix(
@@ -917,7 +997,6 @@ function MobileSummaryWindow({
 function DesktopTelemetrySidebar({
   items,
   activeKey,
-  highlightHex,
   headerStatus,
   headerRefresh,
   onHoverChange,
@@ -932,7 +1011,6 @@ function DesktopTelemetrySidebar({
 }: {
   items: SidebarTelemetryItem[];
   activeKey: PanelKey | null;
-  highlightHex: string;
   headerStatus: string;
   headerRefresh: string;
   onHoverChange: (key: PanelKey | null) => void;
@@ -972,7 +1050,7 @@ function DesktopTelemetrySidebar({
                   ? "border-[#4e3221]"
                   : "border-[#4e3221] bg-[#f6ead1] hover:bg-[#efe1c3]",
               ].join(" ")}
-                style={isActive ? { backgroundColor: highlightHex } : undefined}
+                style={isActive ? { backgroundColor: item.highlightHex } : undefined}
                 onPointerEnter={() => onHoverChange(item.key)}
                 onPointerLeave={() => onHoverChange(null)}
               >
@@ -1154,6 +1232,7 @@ export default function ServerCaseBlueprint({
   const didInitPanelPositionsRef = useRef(false);
   const [sidebarHoverKey, setSidebarHoverKey] = useState<PanelKey | null>(null);
   const [modelHoverKey, setModelHoverKey] = useState<PanelKey | null>(null);
+  const [hoverInteractionsEnabled, setHoverInteractionsEnabled] = useState(false);
 
   const cpuTelemetry = useMemo(() => extractCpuTelemetry(metrics), [metrics]);
   const ramTelemetry = useMemo(() => extractRamTelemetry(metrics), [metrics]);
@@ -1194,9 +1273,7 @@ export default function ServerCaseBlueprint({
   const sidebarHeaderStatus = useMemo(
     () =>
       `Uptime : ${
-        isSystemDown(metrics)
-          ? "system down"
-          : formatUptime(metrics?.uptime_seconds ?? null)
+        isSystemUp(metrics) ? formatUptime(metrics?.uptime_seconds ?? null) : "system down"
       }`,
     [metrics]
   );
@@ -1204,7 +1281,6 @@ export default function ServerCaseBlueprint({
     () => formatLastRefresh(metrics?.last_updated ?? null),
     [metrics]
   );
-  const highlightHex = useMemo(() => getBlueprintHighlightHex(metrics), [metrics]);
   const desktopSidebarItems = useMemo<SidebarTelemetryItem[]>(
     () => [
       {
@@ -1214,6 +1290,7 @@ export default function ServerCaseBlueprint({
         valueA: formatPercent(cpuTelemetry.percent),
         load: undefined,
         percent: cpuTelemetry.percent,
+        highlightHex: getPanelHighlightHex("cpu", metrics),
       },
       {
         key: "ram",
@@ -1224,6 +1301,7 @@ export default function ServerCaseBlueprint({
         valueB: ramTelemetry.secondaryValue,
         load: undefined,
         percent: ramTelemetry.percent,
+        highlightHex: getPanelHighlightHex("ram", metrics),
       },
       {
         key: "gpu",
@@ -1234,6 +1312,7 @@ export default function ServerCaseBlueprint({
         valueB: appendPercentSuffix(gpuTelemetry.secondaryValue, gpuTelemetry.percent),
         load: undefined,
         percent: gpuTelemetry.percent,
+        highlightHex: getPanelHighlightHex("gpu", metrics),
       },
       {
         key: "hdd",
@@ -1244,6 +1323,7 @@ export default function ServerCaseBlueprint({
         valueB: hddTelemetry.secondaryValue,
         load: undefined,
         percent: hddTelemetry.percent,
+        highlightHex: getPanelHighlightHex("hdd", metrics),
       },
       {
         key: "ssd",
@@ -1254,6 +1334,7 @@ export default function ServerCaseBlueprint({
         valueB: ssdTelemetry.secondaryValue,
         load: undefined,
         percent: ssdTelemetry.percent,
+        highlightHex: getPanelHighlightHex("ssd", metrics),
       },
       {
         key: "caseFanA",
@@ -1265,6 +1346,7 @@ export default function ServerCaseBlueprint({
         valueA: caseFanATelemetry.primaryValue,
         load: undefined,
         percent: caseFanATelemetry.percent,
+        highlightHex: getPanelHighlightHex("caseFanA", metrics),
       },
       {
         key: "caseFanB",
@@ -1276,6 +1358,7 @@ export default function ServerCaseBlueprint({
         valueA: cpuFanTelemetry.primaryValue,
         load: undefined,
         percent: cpuFanTelemetry.percent,
+        highlightHex: getPanelHighlightHex("caseFanB", metrics),
       },
     ],
     [
@@ -1632,6 +1715,7 @@ export default function ServerCaseBlueprint({
     const hoverBaseWorld = new Map<string, Vector3>();
     const hoverBaseQuaternion = new Map<string, Quaternion>();
     const hoverPickTargets: Object3D[] = [];
+    const statusLightMeshes: Mesh[] = [];
     const layoutAnchorWorld = new Map<string, { position: Vector3; quaternion: Quaternion }>();
     const flatLayoutPartToGroup = new Map<string, string>();
     const flatLayoutBaseCenterWorld = new Map<string, Vector3>();
@@ -1664,7 +1748,7 @@ export default function ServerCaseBlueprint({
         return [GROUP_2_START, GROUP_2_END];
       }
 
-      if (name === "BackPower") {
+      if (name === "BackPower" || isBackPowerLightName(name)) {
         return [GROUP_3_START, GROUP_3_END];
       }
 
@@ -2004,6 +2088,22 @@ export default function ServerCaseBlueprint({
           if (!(child instanceof Mesh)) return;
           const material = child.material;
           if (!(material instanceof MeshBasicMaterial)) return;
+          const panelKey =
+            CPU_COOLER_HOVER_PART_NAMES.includes(name)
+              ? "caseFanB"
+              : CASE_FAN_HOVER_PART_NAMES.includes(name)
+                ? "caseFanA"
+                : HDD_PART_NAMES.includes(name)
+                  ? "hdd"
+                  : SSD_PART_NAMES.includes(name)
+                    ? "ssd"
+                    : GPU_PART_NAMES.includes(name)
+                      ? "gpu"
+                      : CPU_CORE_PART_NAMES.includes(name)
+                        ? "cpu"
+                        : RAM_PART_NAMES.includes(name)
+                          ? "ram"
+                          : null;
           const baseColor = new Color(
             typeof child.userData.blueprintBaseColor === "number"
               ? child.userData.blueprintBaseColor
@@ -2011,8 +2111,16 @@ export default function ServerCaseBlueprint({
           );
           material.color
             .copy(baseColor)
-            .lerp(getBlueprintHighlightColor(metricsRef.current), hoverAmount);
+            .lerp(getPanelHighlightColor(panelKey, metricsRef.current), hoverAmount);
         });
+      }
+
+      const statusLightBaseHex = getStatusLightBaseColor(metricsRef.current).getHex();
+      for (const mesh of statusLightMeshes) {
+        const material = mesh.material;
+        if (!(material instanceof MeshBasicMaterial)) continue;
+        mesh.userData.blueprintBaseColor = statusLightBaseHex;
+        material.color.setHex(statusLightBaseHex);
       }
 
       const spinTime = performance.now() * 0.001;
@@ -2101,6 +2209,10 @@ export default function ServerCaseBlueprint({
 
       currentProgressRef.current = currentProgress;
       animationProgressRef.current = currentProgress * FINAL_ANIMATION_PROGRESS;
+      setHoverInteractionsEnabled((current) => {
+        const next = animationProgressRef.current >= FLAT_LAYOUT_START;
+        return current === next ? current : next;
+      });
 
       tl.seek(animationProgressRef.current * tl.duration);
       updateCasePositions(animationProgressRef.current);
@@ -2158,7 +2270,7 @@ export default function ServerCaseBlueprint({
         setModelHoverKey(nextModelHoverKey);
       }
 
-      if (sidebarConfig) {
+      if (hoverEnabled && sidebarConfig) {
         for (const partName of sidebarConfig.partNames) {
           hoveredNames.add(partName);
         }
@@ -2270,7 +2382,7 @@ export default function ServerCaseBlueprint({
 
       rootGroup = gltf.scene;
       scene.add(rootGroup);
-      applyBlueprintToScene(scene);
+      applyBlueprintToScene(scene, metricsRef.current);
 
       const box = new Box3().setFromObject(rootGroup);
       const center = box.getCenter(new Vector3());
@@ -2312,6 +2424,10 @@ export default function ServerCaseBlueprint({
         const n = child.name;
         if (!n) return;
 
+        if (child instanceof Mesh && isBackPowerLightName(n)) {
+          statusLightMeshes.push(child);
+        }
+
         const flatLayoutGroup = FLAT_LAYOUT_GROUPS_BY_NORMALIZED_ANCHOR.get(
           normalizeSceneName(n)
         );
@@ -2342,7 +2458,7 @@ export default function ServerCaseBlueprint({
           return;
         }
 
-        if (n === "BackPower") {
+        if (n === "BackPower" || isBackPowerLightName(n)) {
           partsMap.set(n, child);
           return;
         }
@@ -2607,8 +2723,7 @@ export default function ServerCaseBlueprint({
       <div className="sticky top-0 z-0 flex min-h-screen w-full flex-col overflow-hidden relative">
         <DesktopTelemetrySidebar
           items={desktopSidebarItems}
-          activeKey={sidebarHoverKey ?? modelHoverKey}
-          highlightHex={highlightHex}
+          activeKey={hoverInteractionsEnabled ? sidebarHoverKey ?? modelHoverKey : null}
           headerStatus={sidebarHeaderStatus}
           headerRefresh={sidebarHeaderRefresh}
           onHoverChange={setSidebarHoverKey}
